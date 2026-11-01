@@ -28,14 +28,16 @@ if [ ${#tests[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Resolve short names to the tb name without the tb_ prefix
+# Resolve short names to the tb name without the tb_ prefix. Every tb lives in
+# one subfolder of test/ (watchdog/, replay/, ..., generated/).
+tb_exists() { compgen -G "$ROOT/test/*/tb_$1.sv" > /dev/null; }
 names=()
 for t in "${tests[@]}"; do
     t="${t#tb_}"
     t="${t%.sv}"
-    if [ -e "$ROOT/test/tb_$t.sv" ]; then
+    if tb_exists "$t"; then
         names+=("$t")
-    elif [ -e "$ROOT/test/tb_bingo_hw_manager_$t.sv" ]; then
+    elif tb_exists "bingo_hw_manager_$t"; then
         names+=("bingo_hw_manager_$t")
     else
         echo "Testbench for '$t' not found in test/" >&2

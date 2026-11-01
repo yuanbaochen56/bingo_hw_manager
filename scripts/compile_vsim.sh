@@ -16,7 +16,7 @@ bender script vsim -t test -t rtl \
 
 # Step 2: Append generated testbenches (glob — no manual Bender.yml listing needed).
 # Uses -incr so vlog sees the work library from Step 1 (packages, types).
-# Include paths match bender's: test/, test/generated/, axi, common_cells.
+# Include paths: test/common/ (the harness), test/generated/, axi, common_cells.
 GEN_FILES=$(find "${ROOT}/test/generated" -name 'tb_bingo_hw_manager_*.sv' 2>/dev/null | sort)
 if [ -n "$GEN_FILES" ]; then
     AXI_INC=$(find "${ROOT}/.bender" -path '*/axi-*/include' -type d 2>/dev/null | head -1)
@@ -31,7 +31,7 @@ vlog -incr -sv \\
     -suppress 2583 \\
     "+incdir+${AXI_INC}" \\
     "+incdir+${CC_INC}" \\
-    +incdir+${ROOT}/test \\
+    +incdir+${ROOT}/test/common \\
     +incdir+${ROOT}/test/generated \\
 GENEOF
 

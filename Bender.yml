@@ -76,184 +76,198 @@ sources:
   # Level 2
   - src/bingo_hw_manager_top.sv                            # Top-level module
   - target: test
-    # Expose the test/ dir as an include path so the tb `include "..._harness.svh"
+    # Expose every test/ subfolder as an include path so the tb `include "..._harness.svh"
     # (and the tb_stimulus_*.svh) resolve when this `test` target is pulled into an
     # external bender compile (e.g. HeMAiA's system sim uses `-t test`). Without this,
     # only compile_vsim.sh's shell-glob added the incdir, so external consumers hit
-    # Error-[SFCOR] on the harness include.
+    # Error-[SFCOR] on the harness include. A tb includes files of other subfolders
+    # (test/common/ holds the harness), so each subfolder needs its own entry.
     include_dirs:
-      - test
+      - test/4cl
+      - test/base
+      - test/common
+      - test/exit
+      - test/fallback
+      - test/late_risk
+      - test/park
+      - test/pm
+      - test/remap
+      - test/remote
+      - test/replay
+      - test/watchdog
+      - test/wd_bound
+      - test/xcl
     files:
-      - test/bingo_tb_axi_lite_stall.sv                    # helper: random AXI-Lite handshake stalls
-      - test/tb_bingo_hw_manager_dep_matrix.sv
-      - test/tb_bingo_hw_manager_evlog.sv
-      - test/tb_bingo_hw_manager_evlog_age.sv
-      - test/tb_bingo_hw_manager_recovery_hold.sv
-      - test/tb_bingo_hw_manager_recovery_hold_cold.sv
-      - test/tb_bingo_hw_manager_pm_access_level.sv
-      - test/tb_bingo_hw_manager_top.sv
-      - test/tb_bingo_hw_manager_cerf_basic.sv
-      - test/tb_bingo_hw_manager_cerf_skip.sv
-      - test/tb_bingo_hw_manager_cerf_fallback.sv  # stuck core type clears one CERF group and sets another
-      - test/tb_bingo_hw_manager_cerf_fallback_join.sv  # the stuck type's own tasks of the cleared group retire as skipped
-      - test/tb_bingo_hw_manager_cerf_fallback_order.sv  # a lost task the CERF keeps still blocks the later skips of its core
-      - test/tb_bingo_hw_manager_cerf_fallback_multi.sv  # two stuck types degrade lowest first; clear == set
-      - test/tb_bingo_hw_manager_cerf_fallback_reject.sv  # a level-3 reject degrades the group; the proxy's skipped tasks retire
-      - test/tb_bingo_hw_manager_cerf_fallback_double.sv      # CERF degradation: both cores of a type die, the stuck substitute drains the first one's heads
-      - test/tb_bingo_hw_manager_cerf_fallback_double_off.sv  # same without ForeignStuckDrain: stays stuck (the P5b boundary)
-      - test/tb_bingo_hw_manager_cerf_fallback_double_order.sv  # same with a still-needed dead-core head: it stays, nothing passes it
-      - test/tb_bingo_hw_manager_tagged.sv      # identity-aware deps end-to-end
-      - test/tb_bingo_hw_manager_tagged_mc.sv   # identity-aware deps, MULTI-CLUSTER cross-cluster aliasing
-      - test/tb_bingo_hw_manager_watchdog.sv
-      - test/tb_bingo_hw_manager_watchdog_risk_confirm.sv
-      - test/tb_bingo_hw_manager_watchdog_risk_confirm_detect.sv
-      - test/tb_bingo_hw_manager_watchdog_type_thr.sv
-      - test/tb_bingo_hw_manager_watchdog_type_thr_detect.sv
-      - test/tb_bingo_hw_manager_wd_adapt.sv
-      - test/tb_bingo_hw_manager_wd_est.sv
-      - test/tb_bingo_hw_manager_wd_est_floor.sv
-      - test/tb_bingo_hw_manager_wd_budget.sv
-      - test/tb_bingo_hw_manager_wd_adapt_boundary.sv
-      - test/tb_bingo_hw_manager_wd_adapt_execution.sv
-      - test/tb_bingo_hw_manager_wd_adapt_replay.sv
-      - test/tb_bingo_hw_manager_wd_adapt_layout.sv
-      - test/tb_bingo_hw_manager_wd_adapt_layout_ci.sv
-      - test/tb_bingo_hw_manager_wd_adapt_unavailable.sv
-      - test/tb_bingo_hw_manager_wd_adapt_comparable.sv
-      - test/tb_bingo_hw_manager_wd_adapt_moved.sv
-      - test/tb_bingo_hw_manager_wd_adapt_moved_off.sv
-      - test/tb_bingo_hw_manager_wd_adapt_fast.sv
-      - test/tb_bingo_hw_manager_wd_adapt_fast_off.sv
-      - test/tb_bingo_hw_manager_late_window.sv
-      - test/tb_bingo_hw_manager_late_min.sv
-      - test/tb_bingo_hw_manager_late_valid.sv
-      - test/tb_bingo_hw_manager_late_learn.sv
-      - test/tb_bingo_hw_manager_late_risk.sv
-      - test/tb_bingo_hw_manager_late_frac.sv
-      - test/tb_bingo_hw_manager_type_thr_replay.sv
-      - test/tb_bingo_hw_manager_risk_confirm_replay.sv
-      - test/tb_bingo_hw_manager_core_remap.sv
-      - test/tb_bingo_hw_manager_cluster_bound_sel.sv
-      - test/tb_bingo_hw_manager_cluster_bound_fence.sv
-      - test/tb_bingo_hw_manager_cluster_bound_park.sv
-      - test/tb_bingo_hw_manager_fence_fb_stuck.sv
-      - test/tb_bingo_hw_manager_fence_fb_l1.sv
-      - test/tb_bingo_hw_manager_fence_fb_l3.sv
-      - test/tb_bingo_hw_manager_fence_fb_other.sv
-      - test/tb_bingo_hw_manager_fence_fb_off.sv
-      - test/tb_bingo_hw_manager_fence_fb_park.sv
-      - test/tb_bingo_hw_manager_exit_remap.sv
-      - test/tb_bingo_hw_manager_exit_replay.sv
-      - test/tb_bingo_hw_manager_exit_after_exit.sv
-      - test/tb_bingo_hw_manager_exit_own.sv
-      - test/tb_bingo_hw_manager_exit_l3.sv
-      - test/tb_bingo_hw_manager_exit_layout.sv
-      - test/tb_bingo_hw_manager_remap_probe.sv
-      - test/tb_bingo_hw_manager_remap_full_flow.sv
-      - test/tb_bingo_hw_manager_heartbeat.sv
-      - test/tb_bingo_hw_manager_heartbeat_long_task.sv
-      - test/tb_bingo_hw_manager_remap_passthrough.sv
-      - test/tb_bingo_hw_manager_remap_dead_suspect.sv
-      - test/tb_bingo_hw_manager_remap_busy_no_remap.sv   # healthy busy core keeps its tasks
-      - test/tb_bingo_hw_manager_remap_dummy_set_order.sv # dummy-set waits for its same-core source
-      - test/tb_bingo_hw_manager_remap_sticky_order.sv    # dead core's tasks go to one substitute, in order
-      - test/tb_bingo_hw_manager_remap_dummy_after_remap.sv # dummy-set waits for remapped earlier tasks
-      - test/tb_bingo_hw_manager_remap_mask_off.sv        # CoreRemapAllowMask='0: detection only (HeMAiA)
-      - test/tb_bingo_hw_manager_csr_heartbeat_addr.sv    # heartbeat on CSR 0x5fe + masked slot (HeMAiA)
-      - test/tb_bingo_hw_manager_replay_lost_task.sv       # running task of a dead core replayed
-      - test/tb_bingo_hw_manager_no_replay_normal.sv
-      - test/tb_bingo_hw_manager_replay_no_replay.sv
-      - test/tb_bingo_hw_manager_replay_no_replay_queued.sv
-      - test/tb_bingo_hw_manager_replay_no_replay_cerf.sv
-      - test/tb_bingo_hw_manager_replay_no_replay_l3.sv
-      - test/tb_bingo_hw_manager_replay_no_replay_foreign.sv
-      - test/tb_bingo_hw_manager_replay_no_replay_foreign_off.sv
-      - test/tb_bingo_hw_manager_replay_queued_tasks.sv    # queued normal/dummy/skipped entries moved in order
-      - test/tb_bingo_hw_manager_replay_sequencing_edge.sv # same-core edge behind the lost task
-      - test/tb_bingo_hw_manager_replay_slow_not_dead.sv   # silent between the timeouts: no fence
-      - test/tb_bingo_hw_manager_replay_zombie.sv          # fenced core's late done dropped
-      - test/tb_bingo_hw_manager_replay_done_race.sv       # done vs confirm timeout, exactly once
-      - test/tb_bingo_hw_manager_replay_no_substitute.sv   # AllowMask '0: replay_stuck, rest runs
-      - test/tb_bingo_hw_manager_replay_chain.sv           # substitute dies too
-      - test/tb_bingo_hw_manager_replay_chain_partial.sv   # substitute dies mid-MOVE: order kept
-      - test/tb_bingo_hw_manager_replay_stuck_other_core.sv # a stuck core does not block another replay
-      - test/tb_bingo_hw_manager_replay_two_clusters.sv    # replay inside cluster 1
-      - test/tb_bingo_hw_manager_replay_disabled.sv        # confirm timeout 0: detection only
-      - test/tb_bingo_hw_manager_xcl_fallback.sv           # level 2: substitute in another cluster
-      - test/tb_bingo_hw_manager_xcl_prefer_local.sv       # level 2: own cluster preferred
-      - test/tb_bingo_hw_manager_xcl_prefer_local_isolated.sv  # every cluster in no partition: the own cluster still takes over
-      - test/tb_bingo_hw_manager_xcl_two_faults.sv         # level 2: two dead cores, two clusters
-      - test/tb_bingo_hw_manager_xcl_no_substitute.sv      # level 2: none in the chiplet, rest runs
-      - test/tb_bingo_hw_manager_xcl_disabled.sv           # level 2 off (default): stuck
-      - test/tb_bingo_hw_manager_4cl_l2_order.sv          # four clusters: dead DM core -> lowest other live cluster
-      - test/tb_bingo_hw_manager_4cl_dm_two.sv            # four clusters: the substitute DM core dies too
-      - test/tb_bingo_hw_manager_4cl_dm_three.sv          # four clusters: three DM cores die, event log of 12 slots
-      - test/tb_bingo_hw_manager_4cl_gemm_cerf.sv         # four clusters: GEMM core stuck in its cluster, CERF
-      - test/tb_bingo_hw_manager_4cl_spare.sv             # four clusters: a spare cluster's DM core first, then the lowest live one
-      - test/tb_bingo_hw_manager_4cl_spare_change.sv      # four clusters: another spare later; fenced entries keep their substitute
-      - test/tb_bingo_hw_manager_4cl_spare_park.sv        # four clusters: a parked DM core parks on the spare
-      - test/tb_bingo_hw_manager_4cl_partition.sv         # four clusters, two partitions: substitutes stay in the partition, else stuck
-      - test/tb_bingo_hw_manager_4cl_partition_spare.sv   # four clusters, two partitions: a spare in the other partition is not taken
-      - test/tb_bingo_hw_manager_4cl_partition_park.sv    # four clusters, two partitions: parking stays in the partition
-      - test/tb_bingo_hw_manager_remote_dispatch.sv        # level 3: dead core's tasks run on the other chiplet
-      - test/tb_bingo_hw_manager_remote_full_queue.sv      # level 3: export from a full checkout queue, in order
-      - test/tb_bingo_hw_manager_remote_no_executor.sv     # level 3: no live core of the type anywhere
-      - test/tb_bingo_hw_manager_remote_done_mismatch.sv   # level 3: wrong remote done task id stops the proxy
-      - test/tb_bingo_hw_manager_remote_done_stray.sv      # level 3: a done / reject for no proxy slot is dropped
-      - test/tb_bingo_hw_manager_remote_link.sv            # level 3 transport adapter unit test
-      - test/tb_bingo_hw_manager_chiplet_mailbox_ro.sv     # chiplet done-queue mailbox: only MBOXW is writable remotely
-      - test/tb_bingo_hw_manager_rlink_dispatch.sv         # level 3 over remote_link + xbar: remote_dispatch
-      - test/tb_bingo_hw_manager_rlink_moved.sv           # level 3 over remote_link: imported tasks are marked moved (ready queue, wd_moved_q)
-      - test/tb_bingo_hw_manager_rlink_full_queue.sv       # level 3 over remote_link + xbar: remote_full_queue
-      - test/tb_bingo_hw_manager_rlink_no_executor.sv      # level 3 over remote_link + xbar: remote_no_executor
-      - test/tb_bingo_hw_manager_rlink_done_order.sv       # level 3 over remote_link: two proxy slots, done order
-      - test/tb_bingo_hw_manager_rlink_credit_exhaust.sv   # level 3 over remote_link: one credit
-      - test/tb_bingo_hw_manager_rlink_hol.sv               # level 3, two peers: a peer without credits does not block the other
-      - test/tb_bingo_hw_manager_rlink_proxy_timeout.sv     # level 3: a lost remote done stops the proxy after the timeout
-      - test/tb_bingo_hw_manager_rlink_proxy_timeout_slow.sv # level 3: slow remote dones within the timeout do not trip it
-      - test/tb_bingo_hw_manager_rlink_loopback.sv         # level 3 over remote_link: single-chiplet loopback (force remote)
-      - test/tb_bingo_hw_manager_rlink_no_target.sv        # level 3 over remote_link: a type without a target is stuck, others export
-      - test/tb_bingo_hw_manager_rlink_reject.sv           # level 3 over remote_link: reject on import, the link keeps working
-      - test/tb_bingo_hw_manager_rlink_bounce.sv           # level 3 over remote_link: the executing core dies, imports bounce back
-      - test/tb_bingo_hw_manager_pm_fault_aware.sv         # control plane: a fenced core does not keep its power domain awake
-      - test/tb_bingo_hw_manager_substitute_least_loaded.sv # control plane: a dead core's tasks go to the least loaded core
-      - test/tb_bingo_hw_manager_pm_slow_watchdog.sv       # control plane: the watchdog counts normal-clock cycles in a slow domain
-      - test/tb_bingo_hw_manager_pm_recovery_boost.sv      # control plane: a dead core's substitute runs at the boost level
-      - test/tb_bingo_hw_manager_exit_idle.sv              # exited cores idle and stop boosting; a ready read clears exit
-      - test/tb_bingo_hw_manager_ready_pending.sv          # non-blocking ready poll follows the CSR ready queues
-      - test/tb_bingo_hw_manager_pm_idle_delay.sv          # control plane: idle level only after an idle entry delay
-      - test/tb_bingo_hw_manager_pm_access_wake.sv         # control plane: an external access keeps the cluster awake
-      - test/tb_bingo_hw_manager_pm_access_wake_delay.sv   # same, with an idle entry delay
-      - test/tb_bingo_hw_manager_park.sv                # core parking: in-flight stays, later tasks move
-      - test/tb_bingo_hw_manager_park_no_substitute.sv  # core parking: no live substitute, request fails
-      - test/tb_bingo_hw_manager_park_fence.sv          # core parking: a fence during the drain drops it
-      - test/tb_bingo_hw_manager_park_sub_fence.sv        # parking: the parked core's substitute dies, a third core takes over
-      - test/tb_bingo_hw_manager_park_sub_fence_last.sv   # parking: the substitute dies and none is left, the park fails
-      - test/tb_bingo_hw_manager_park_target.sv           # parking: a core that runs another core's tasks cannot be parked
-      - test/tb_bingo_hw_manager_park_mutual.sv           # parking: two cores asked at once never park onto each other
-      - test/tb_bingo_hw_manager_park_commit.sv           # parking: no commit in the cycle the entry is recomputed
-      - test/tb_bingo_hw_manager_unpark.sv                # parking: move back after the tasks on the substitute retired
-      - test/tb_bingo_hw_manager_unpark_cancel.sv         # parking: move back cancelled / immediate
-      - test/tb_bingo_hw_manager_risk_park.sv             # fault precursors: late beats -> at risk -> parked, clear moves back
-      - test/tb_bingo_hw_manager_risk_derate.sv           # fault precursors: no substitute, park fails, domain derated
-      - test/tb_bingo_hw_manager_risk_decay.sv            # fault precursors: sparse late beats decay, a burst trips
-      - test/tb_bingo_hw_manager_boost_capacity.sv        # capacity boost: survivors of a type, budget per lost core, minimum load
-      - test/tb_bingo_hw_manager_boost_capacity_edges.sv  # capacity boost: lost-slot accounting, shared/derated domains, at-risk parking
-      - test/tb_bingo_hw_manager_pm_counters_unit.sv     # power-domain counters: random levels, DVFS, equal levels, offset domains, wrap
-      - test/tb_bingo_hw_manager_pm_counters_boost.sv    # power-domain counters of the top, every cycle: idle, normal, boost (fence)
-      - test/tb_bingo_hw_manager_pm_counters_access.sv   # power-domain counters of the top, every cycle: two domains, servo and derate levels
-      - test/tb_bingo_hw_manager_task_queue_master.sv     # task fetch: exactly the task count, none for 0, at most one per task id
-      - test/tb_bingo_hw_manager_task_queue_slave.sv      # task queue slave mode: the start reset outputs stay 0
-      - test/tb_bingo_hw_manager_bus_error.sv             # bus errors: a failed descriptor read stops the fetch; PM write / read flags
-      - test/tb_bingo_hw_manager_pm_division.sv           # PM division writes: packed registers vs one per domain, with the host as a second writer
-      - test/tb_bingo_hw_manager_csr_unknown.sv           # CSR port: an unknown CSR reads 0 or is ignored, never stalls
-      - test/tb_bingo_hw_manager_chiplet_dep_set_data.sv  # chiplet dep-set write: the data is the whole descriptor, no unknown bit
-      - test/tb_bingo_hw_manager_done_mailbox.sv          # done mailbox: a done for a slot that does not exist is dropped, never blocks
-      - test/tb_bingo_hw_manager_waiting_depth.sv         # waiting queues of depth 2: back-pressure on the task queue, all tasks complete
-      - test/tb_bingo_hw_manager_park_random.sv           # random graph, fault and park / move back (seeds in run_regression.sh)
-      - test/tb_bingo_hw_manager_rlink_random.sv           # level 3 over remote_link: random (scripts/run_replay_random.sh)
-      - test/tb_bingo_hw_manager_rlink_random_reject.sv    # level 3 over remote_link: random, a hang on each chiplet (rejects)
-      - test/tb_bingo_hw_manager_replay_random.sv          # random graph + random fault (scripts/run_replay_random.sh)
+      - test/common/bingo_tb_axi_lite_stall.sv                    # helper: random AXI-Lite handshake stalls
+      - test/base/tb_bingo_hw_manager_dep_matrix.sv
+      - test/base/tb_bingo_hw_manager_evlog.sv
+      - test/base/tb_bingo_hw_manager_evlog_age.sv
+      - test/pm/tb_bingo_hw_manager_recovery_hold.sv
+      - test/pm/tb_bingo_hw_manager_recovery_hold_cold.sv
+      - test/pm/tb_bingo_hw_manager_pm_access_level.sv
+      - test/base/tb_bingo_hw_manager_top.sv
+      - test/base/tb_bingo_hw_manager_cerf_basic.sv
+      - test/base/tb_bingo_hw_manager_cerf_skip.sv
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback.sv  # stuck core type clears one CERF group and sets another
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_join.sv  # the stuck type's own tasks of the cleared group retire as skipped
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_order.sv  # a lost task the CERF keeps still blocks the later skips of its core
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_multi.sv  # two stuck types degrade lowest first; clear == set
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_reject.sv  # a level-3 reject degrades the group; the proxy's skipped tasks retire
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_double.sv      # CERF degradation: both cores of a type die, the stuck substitute drains the first one's heads
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_double_off.sv  # same without ForeignStuckDrain: stays stuck (the P5b boundary)
+      - test/fallback/tb_bingo_hw_manager_cerf_fallback_double_order.sv  # same with a still-needed dead-core head: it stays, nothing passes it
+      - test/base/tb_bingo_hw_manager_tagged.sv      # identity-aware deps end-to-end
+      - test/base/tb_bingo_hw_manager_tagged_mc.sv   # identity-aware deps, MULTI-CLUSTER cross-cluster aliasing
+      - test/watchdog/tb_bingo_hw_manager_watchdog.sv
+      - test/late_risk/tb_bingo_hw_manager_watchdog_risk_confirm.sv
+      - test/late_risk/tb_bingo_hw_manager_watchdog_risk_confirm_detect.sv
+      - test/watchdog/tb_bingo_hw_manager_watchdog_type_thr.sv
+      - test/watchdog/tb_bingo_hw_manager_watchdog_type_thr_detect.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_est.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_est_floor.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_budget.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_boundary.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_execution.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_replay.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_layout.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_layout_ci.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_unavailable.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_comparable.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_moved.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_moved_off.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_fast.sv
+      - test/wd_bound/tb_bingo_hw_manager_wd_adapt_fast_off.sv
+      - test/late_risk/tb_bingo_hw_manager_late_window.sv
+      - test/late_risk/tb_bingo_hw_manager_late_min.sv
+      - test/late_risk/tb_bingo_hw_manager_late_valid.sv
+      - test/late_risk/tb_bingo_hw_manager_late_learn.sv
+      - test/late_risk/tb_bingo_hw_manager_late_risk.sv
+      - test/late_risk/tb_bingo_hw_manager_late_frac.sv
+      - test/watchdog/tb_bingo_hw_manager_type_thr_replay.sv
+      - test/late_risk/tb_bingo_hw_manager_risk_confirm_replay.sv
+      - test/remap/tb_bingo_hw_manager_core_remap.sv
+      - test/remap/tb_bingo_hw_manager_cluster_bound_sel.sv
+      - test/remap/tb_bingo_hw_manager_cluster_bound_fence.sv
+      - test/remap/tb_bingo_hw_manager_cluster_bound_park.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_stuck.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_l1.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_l3.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_other.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_off.sv
+      - test/fallback/tb_bingo_hw_manager_fence_fb_park.sv
+      - test/exit/tb_bingo_hw_manager_exit_remap.sv
+      - test/exit/tb_bingo_hw_manager_exit_replay.sv
+      - test/exit/tb_bingo_hw_manager_exit_after_exit.sv
+      - test/exit/tb_bingo_hw_manager_exit_own.sv
+      - test/exit/tb_bingo_hw_manager_exit_l3.sv
+      - test/exit/tb_bingo_hw_manager_exit_layout.sv
+      - test/remap/tb_bingo_hw_manager_remap_probe.sv
+      - test/remap/tb_bingo_hw_manager_remap_full_flow.sv
+      - test/watchdog/tb_bingo_hw_manager_heartbeat.sv
+      - test/watchdog/tb_bingo_hw_manager_heartbeat_long_task.sv
+      - test/remap/tb_bingo_hw_manager_remap_passthrough.sv
+      - test/remap/tb_bingo_hw_manager_remap_dead_suspect.sv
+      - test/remap/tb_bingo_hw_manager_remap_busy_no_remap.sv   # healthy busy core keeps its tasks
+      - test/remap/tb_bingo_hw_manager_remap_dummy_set_order.sv # dummy-set waits for its same-core source
+      - test/remap/tb_bingo_hw_manager_remap_sticky_order.sv    # dead core's tasks go to one substitute, in order
+      - test/remap/tb_bingo_hw_manager_remap_dummy_after_remap.sv # dummy-set waits for remapped earlier tasks
+      - test/remap/tb_bingo_hw_manager_remap_mask_off.sv        # CoreRemapAllowMask='0: detection only (HeMAiA)
+      - test/watchdog/tb_bingo_hw_manager_csr_heartbeat_addr.sv    # heartbeat on CSR 0x5fe + masked slot (HeMAiA)
+      - test/replay/tb_bingo_hw_manager_replay_lost_task.sv       # running task of a dead core replayed
+      - test/replay/tb_bingo_hw_manager_no_replay_normal.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay_queued.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay_cerf.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay_l3.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay_foreign.sv
+      - test/replay/tb_bingo_hw_manager_replay_no_replay_foreign_off.sv
+      - test/replay/tb_bingo_hw_manager_replay_queued_tasks.sv    # queued normal/dummy/skipped entries moved in order
+      - test/replay/tb_bingo_hw_manager_replay_sequencing_edge.sv # same-core edge behind the lost task
+      - test/replay/tb_bingo_hw_manager_replay_slow_not_dead.sv   # silent between the timeouts: no fence
+      - test/replay/tb_bingo_hw_manager_replay_zombie.sv          # fenced core's late done dropped
+      - test/replay/tb_bingo_hw_manager_replay_done_race.sv       # done vs confirm timeout, exactly once
+      - test/replay/tb_bingo_hw_manager_replay_no_substitute.sv   # AllowMask '0: replay_stuck, rest runs
+      - test/replay/tb_bingo_hw_manager_replay_chain.sv           # substitute dies too
+      - test/replay/tb_bingo_hw_manager_replay_chain_partial.sv   # substitute dies mid-MOVE: order kept
+      - test/replay/tb_bingo_hw_manager_replay_stuck_other_core.sv # a stuck core does not block another replay
+      - test/replay/tb_bingo_hw_manager_replay_two_clusters.sv    # replay inside cluster 1
+      - test/replay/tb_bingo_hw_manager_replay_disabled.sv        # confirm timeout 0: detection only
+      - test/xcl/tb_bingo_hw_manager_xcl_fallback.sv           # level 2: substitute in another cluster
+      - test/xcl/tb_bingo_hw_manager_xcl_prefer_local.sv       # level 2: own cluster preferred
+      - test/xcl/tb_bingo_hw_manager_xcl_prefer_local_isolated.sv  # every cluster in no partition: the own cluster still takes over
+      - test/xcl/tb_bingo_hw_manager_xcl_two_faults.sv         # level 2: two dead cores, two clusters
+      - test/xcl/tb_bingo_hw_manager_xcl_no_substitute.sv      # level 2: none in the chiplet, rest runs
+      - test/xcl/tb_bingo_hw_manager_xcl_disabled.sv           # level 2 off (default): stuck
+      - test/4cl/tb_bingo_hw_manager_4cl_l2_order.sv          # four clusters: dead DM core -> lowest other live cluster
+      - test/4cl/tb_bingo_hw_manager_4cl_dm_two.sv            # four clusters: the substitute DM core dies too
+      - test/4cl/tb_bingo_hw_manager_4cl_dm_three.sv          # four clusters: three DM cores die, event log of 12 slots
+      - test/4cl/tb_bingo_hw_manager_4cl_gemm_cerf.sv         # four clusters: GEMM core stuck in its cluster, CERF
+      - test/4cl/tb_bingo_hw_manager_4cl_spare.sv             # four clusters: a spare cluster's DM core first, then the lowest live one
+      - test/4cl/tb_bingo_hw_manager_4cl_spare_change.sv      # four clusters: another spare later; fenced entries keep their substitute
+      - test/4cl/tb_bingo_hw_manager_4cl_spare_park.sv        # four clusters: a parked DM core parks on the spare
+      - test/4cl/tb_bingo_hw_manager_4cl_partition.sv         # four clusters, two partitions: substitutes stay in the partition, else stuck
+      - test/4cl/tb_bingo_hw_manager_4cl_partition_spare.sv   # four clusters, two partitions: a spare in the other partition is not taken
+      - test/4cl/tb_bingo_hw_manager_4cl_partition_park.sv    # four clusters, two partitions: parking stays in the partition
+      - test/remote/tb_bingo_hw_manager_remote_dispatch.sv        # level 3: dead core's tasks run on the other chiplet
+      - test/remote/tb_bingo_hw_manager_remote_full_queue.sv      # level 3: export from a full checkout queue, in order
+      - test/remote/tb_bingo_hw_manager_remote_no_executor.sv     # level 3: no live core of the type anywhere
+      - test/remote/tb_bingo_hw_manager_remote_done_mismatch.sv   # level 3: wrong remote done task id stops the proxy
+      - test/remote/tb_bingo_hw_manager_remote_done_stray.sv      # level 3: a done / reject for no proxy slot is dropped
+      - test/remote/tb_bingo_hw_manager_remote_link.sv            # level 3 transport adapter unit test
+      - test/base/tb_bingo_hw_manager_chiplet_mailbox_ro.sv     # chiplet done-queue mailbox: only MBOXW is writable remotely
+      - test/remote/tb_bingo_hw_manager_rlink_dispatch.sv         # level 3 over remote_link + xbar: remote_dispatch
+      - test/remote/tb_bingo_hw_manager_rlink_moved.sv           # level 3 over remote_link: imported tasks are marked moved (ready queue, wd_moved_q)
+      - test/remote/tb_bingo_hw_manager_rlink_full_queue.sv       # level 3 over remote_link + xbar: remote_full_queue
+      - test/remote/tb_bingo_hw_manager_rlink_no_executor.sv      # level 3 over remote_link + xbar: remote_no_executor
+      - test/remote/tb_bingo_hw_manager_rlink_done_order.sv       # level 3 over remote_link: two proxy slots, done order
+      - test/remote/tb_bingo_hw_manager_rlink_credit_exhaust.sv   # level 3 over remote_link: one credit
+      - test/remote/tb_bingo_hw_manager_rlink_hol.sv               # level 3, two peers: a peer without credits does not block the other
+      - test/remote/tb_bingo_hw_manager_rlink_proxy_timeout.sv     # level 3: a lost remote done stops the proxy after the timeout
+      - test/remote/tb_bingo_hw_manager_rlink_proxy_timeout_slow.sv # level 3: slow remote dones within the timeout do not trip it
+      - test/remote/tb_bingo_hw_manager_rlink_loopback.sv         # level 3 over remote_link: single-chiplet loopback (force remote)
+      - test/remote/tb_bingo_hw_manager_rlink_no_target.sv        # level 3 over remote_link: a type without a target is stuck, others export
+      - test/remote/tb_bingo_hw_manager_rlink_reject.sv           # level 3 over remote_link: reject on import, the link keeps working
+      - test/remote/tb_bingo_hw_manager_rlink_bounce.sv           # level 3 over remote_link: the executing core dies, imports bounce back
+      - test/pm/tb_bingo_hw_manager_pm_fault_aware.sv         # control plane: a fenced core does not keep its power domain awake
+      - test/remap/tb_bingo_hw_manager_substitute_least_loaded.sv # control plane: a dead core's tasks go to the least loaded core
+      - test/pm/tb_bingo_hw_manager_pm_slow_watchdog.sv       # control plane: the watchdog counts normal-clock cycles in a slow domain
+      - test/pm/tb_bingo_hw_manager_pm_recovery_boost.sv      # control plane: a dead core's substitute runs at the boost level
+      - test/exit/tb_bingo_hw_manager_exit_idle.sv              # exited cores idle and stop boosting; a ready read clears exit
+      - test/base/tb_bingo_hw_manager_ready_pending.sv          # non-blocking ready poll follows the CSR ready queues
+      - test/pm/tb_bingo_hw_manager_pm_idle_delay.sv          # control plane: idle level only after an idle entry delay
+      - test/pm/tb_bingo_hw_manager_pm_access_wake.sv         # control plane: an external access keeps the cluster awake
+      - test/pm/tb_bingo_hw_manager_pm_access_wake_delay.sv   # same, with an idle entry delay
+      - test/park/tb_bingo_hw_manager_park.sv                # core parking: in-flight stays, later tasks move
+      - test/park/tb_bingo_hw_manager_park_no_substitute.sv  # core parking: no live substitute, request fails
+      - test/park/tb_bingo_hw_manager_park_fence.sv          # core parking: a fence during the drain drops it
+      - test/park/tb_bingo_hw_manager_park_sub_fence.sv        # parking: the parked core's substitute dies, a third core takes over
+      - test/park/tb_bingo_hw_manager_park_sub_fence_last.sv   # parking: the substitute dies and none is left, the park fails
+      - test/park/tb_bingo_hw_manager_park_target.sv           # parking: a core that runs another core's tasks cannot be parked
+      - test/park/tb_bingo_hw_manager_park_mutual.sv           # parking: two cores asked at once never park onto each other
+      - test/park/tb_bingo_hw_manager_park_commit.sv           # parking: no commit in the cycle the entry is recomputed
+      - test/park/tb_bingo_hw_manager_unpark.sv                # parking: move back after the tasks on the substitute retired
+      - test/park/tb_bingo_hw_manager_unpark_cancel.sv         # parking: move back cancelled / immediate
+      - test/late_risk/tb_bingo_hw_manager_risk_park.sv             # fault precursors: late beats -> at risk -> parked, clear moves back
+      - test/late_risk/tb_bingo_hw_manager_risk_derate.sv           # fault precursors: no substitute, park fails, domain derated
+      - test/late_risk/tb_bingo_hw_manager_risk_decay.sv            # fault precursors: sparse late beats decay, a burst trips
+      - test/pm/tb_bingo_hw_manager_boost_capacity.sv        # capacity boost: survivors of a type, budget per lost core, minimum load
+      - test/pm/tb_bingo_hw_manager_boost_capacity_edges.sv  # capacity boost: lost-slot accounting, shared/derated domains, at-risk parking
+      - test/pm/tb_bingo_hw_manager_pm_counters_unit.sv     # power-domain counters: random levels, DVFS, equal levels, offset domains, wrap
+      - test/pm/tb_bingo_hw_manager_pm_counters_boost.sv    # power-domain counters of the top, every cycle: idle, normal, boost (fence)
+      - test/pm/tb_bingo_hw_manager_pm_counters_access.sv   # power-domain counters of the top, every cycle: two domains, servo and derate levels
+      - test/base/tb_bingo_hw_manager_task_queue_master.sv     # task fetch: exactly the task count, none for 0, at most one per task id
+      - test/base/tb_bingo_hw_manager_task_queue_slave.sv      # task queue slave mode: the start reset outputs stay 0
+      - test/base/tb_bingo_hw_manager_bus_error.sv             # bus errors: a failed descriptor read stops the fetch; PM write / read flags
+      - test/pm/tb_bingo_hw_manager_pm_division.sv           # PM division writes: packed registers vs one per domain, with the host as a second writer
+      - test/base/tb_bingo_hw_manager_csr_unknown.sv           # CSR port: an unknown CSR reads 0 or is ignored, never stalls
+      - test/base/tb_bingo_hw_manager_chiplet_dep_set_data.sv  # chiplet dep-set write: the data is the whole descriptor, no unknown bit
+      - test/base/tb_bingo_hw_manager_done_mailbox.sv          # done mailbox: a done for a slot that does not exist is dropped, never blocks
+      - test/base/tb_bingo_hw_manager_waiting_depth.sv         # waiting queues of depth 2: back-pressure on the task queue, all tasks complete
+      - test/park/tb_bingo_hw_manager_park_random.sv           # random graph, fault and park / move back (seeds in run_regression.sh)
+      - test/remote/tb_bingo_hw_manager_rlink_random.sv           # level 3 over remote_link: random (scripts/run_replay_random.sh)
+      - test/remote/tb_bingo_hw_manager_rlink_random_reject.sv    # level 3 over remote_link: random, a hang on each chiplet (rejects)
+      - test/replay/tb_bingo_hw_manager_replay_random.sv          # random graph + random fault (scripts/run_replay_random.sh)
 
   # NOTE: Generated test files in test/generated/ are NOT listed here.
   # They are picked up automatically by compile_vsim.sh via shell glob.

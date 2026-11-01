@@ -19,7 +19,7 @@ call_vsim() {
 }
 
 exec_test() {
-    if [ ! -e "$ROOT/test/tb_$1.sv" ]; then
+    if ! compgen -G "$ROOT/test/*/tb_$1.sv" > /dev/null; then
         echo "Testbench for '$1' not found!"
         exit 1
     fi

@@ -11,7 +11,7 @@ N=${1:-40}
 TAG=${2:-latest}
 cd "$ROOT" || exit 1
 # Directed tests in Bender.yml order; the random test runs separately with seeds.
-tests=$(sed -n 's/^ *- test\/tb_\(bingo_hw_manager_[a-z0-9_]*\)\.sv.*/\1/p' Bender.yml |
+tests=$(sed -n 's/^ *- test\/[a-z0-9_]*\/tb_\(bingo_hw_manager_[a-z0-9_]*\)\.sv.*/\1/p' Bender.yml |
         grep -v '^bingo_hw_manager_replay_random$\|^bingo_hw_manager_rlink_random$\|^bingo_hw_manager_rlink_random_reject$\|^bingo_hw_manager_park_random$')
 scripts/sim.sh $tests > "build/regress_$TAG.log" 2>&1
 sim_rc=$?
