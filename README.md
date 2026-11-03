@@ -311,8 +311,9 @@ already passed. `bingo_hw_manager_replay_ctrl` migrates one fenced core at a tim
 A replayed task keeps its logical core id, so its dep_set releases the same dependents as
 before, including a same-core sequencing edge behind the lost task. If no live core may run an
 entry, that core is marked stuck (sticky; `replay_stuck_o` is raised): its remaining entries stay
-in its checkout queue, which no longer retires anything, and the replay controller moves on to
-the other fenced cores. The other cores keep running.
+in its checkout queue, which retires nothing more except entries that run on no core (see CERF
+degradation below), and the replay controller moves on to the other fenced cores. The other
+cores keep running.
 While a replay step may push into a cluster, normal dispatch into that cluster pauses.
 
 **Remap (only once retired):**
@@ -381,6 +382,18 @@ master, CERF, remote link) only execute them.
   its L1) does not count as idle while accessed and for `bingo_hw_manager_access_wake_hold_i`
   cycles after the last access (0 = off), fenced slots included. It only delays the idle
   level: the idle entry delay keeps counting the cores' own idle time.
+- **Core parking.** `bingo_hw_manager_park_req_i` bit `core + cluster*NUM_CORES` (0 = off)
+  holds new tasks of that live slot until its checkout and ready queues have drained, then
+  writes the slot mapping table with the usual substitute (the slot itself and slots in
+  HOLD or PARKED masked out; not another chiplet). Later executing tasks follow that entry;
+  dummy-set and CERF-skipped tasks stay on the logical core. No substitute, or a slot that
+  runs another slot's tasks (it could not drain), raises `bingo_hw_manager_park_fail_o`
+  for that bit until the request drops; so does the CSR-less AXI-Lite queue mode. A fence
+  drops the park and uses the existing replay; if the substitute dies, the entry moves on
+  (or back to the slot), and the slot's new tasks wait for the replay of its older ones.
+  Clearing the request of a parked slot moves it back: its new tasks wait (on neither core)
+  until none of its tasks is left on another core, then run on the slot again; the
+  substitute's own tasks are not held. Setting the request again meanwhile keeps it parked.
 
 The PM prints `[BINGO_PM]` for every level it applies (simulation only).
 
@@ -414,7 +427,8 @@ type is left on this one:
 - **Reject.** If the receiving chiplet has no live core of the type (on arrival, or because the
   core running its imports died and none is left), it returns a reject instead of holding the
   link. The proxy slot then stops retiring and exporting, and `replay_stuck_o` is raised, as
-  when no local core may run a task.
+  when no local core may run a task (it still retires entries that run on no core, see CERF
+  degradation below).
 - **Timeout.** A proxy slot whose exported head waits `remote_proxy_timeout_i` cycles for its
   remote done (0 = forever) takes the done as lost (a dropped packet, a dead chiplet or link)
   and stops as on a reject; `remote_timeout_o` tells the two apart. The task is not resent: it
@@ -470,6 +484,22 @@ The compiler pass `bingo_compile_conditional_regions()`:
 4. Assigns CERF group IDs (0-15) automatically
 
 Skipped tasks still propagate dependency signals (via the checkout queue as dummies), preserving graph correctness.
+
+**Degradation (stuck or rejected core type).** A host table, one entry per core type
+(`cerf_fb_en_i`, `cerf_fb_clear_i`, `cerf_fb_set_i`, default off), lets the manager switch to a
+backup branch on its own: once any slot of an enabled type is stuck or rejected, it clears one
+CERF group and sets another (read-modify-write, other groups unchanged) and raises
+`cerf_fb_evt_o` for that type. One update per cycle, lowest type first; a host write of the
+whole mask in the same cycle wins and the update follows a cycle later. One update per enable:
+later host writes are left alone, and dropping the enable clears the event and re-arms the type.
+For the graph to finish, the stuck core's own tasks of the cleared group must still release
+their dependents. A stuck or rejected slot therefore retires its checkout head the way a skipped
+task retires (dep_set, no done, nothing runs) when the head runs on no core anyway (dummy-set or
+skipped at dispatch) or the current CERF skips it, as long as the head belongs to the slot's own
+logical core and that core has no task in another slot. The stuck core's later dummy-set and
+skipped tasks join its checkout for the same reason. Any other head (a lost task the CERF still
+needs) keeps blocking, so nothing overtakes it. This only depends on the CERF state, so a host
+that switches the groups itself after reading the stuck status gets the same behaviour.
 
 ### Additional Modules
 
