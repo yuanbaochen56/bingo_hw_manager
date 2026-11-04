@@ -155,13 +155,13 @@ module bingo_hw_manager_watchdog #(
 `ifndef SYNTHESIS
                         if (bound_i.confirm_src[c][cl] == bingo_hw_manager_pkg::WdConfirmLearned)
                             $display("[BINGO_ADAPT_CONFIRM] %0t core=%0d cluster=%0d type=%0d class=%0d threshold=%0d",
-                                     $time, c, cl, CoreTypeId[c][cl], bound_i.wd_class[c][cl], bound_i.confirm[c][cl]);
+                                     $time, c, cl, CoreTypeId[c][cl], bound_i.wd_class[c][cl], bound_i.confirm_eff[c][cl]);
                         else if (bound_i.confirm_src[c][cl] == bingo_hw_manager_pkg::WdConfirmRisk)
                             $display("[BINGO_RISK_CONFIRM] %0t core=%0d cluster=%0d threshold=%0d",
-                                     $time, c, cl, bound_i.risk_confirm);
+                                     $time, c, cl, bound_i.confirm_eff[c][cl]);
                         else if (bound_i.confirm_src[c][cl] == bingo_hw_manager_pkg::WdConfirmType)
                             $display("[BINGO_TYPE_CONFIRM] %0t core=%0d cluster=%0d type=%0d threshold=%0d",
-                                     $time, c, cl, CoreTypeId[c][cl], bound_i.confirm[c][cl]);
+                                     $time, c, cl, CoreTypeId[c][cl], bound_i.confirm_eff[c][cl]);
 `endif
                     end else if (busy_q[c][cl] && event_i.tick[c][cl] && timer_q[c][cl] != {CounterWidth{1'b1}}) begin
                         timer_q[c][cl] <= timer_q[c][cl] + 1'b1; // (7) Increment timer if core is busy and no heartbeat

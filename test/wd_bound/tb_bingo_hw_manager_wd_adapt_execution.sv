@@ -38,7 +38,7 @@ module tb_bingo_hw_manager_wd_adapt_execution;
     ) wd (
         .clk_i(clk), .rst_ni(rst),
         .event_i('{dispatch: dispatch, done: done, heartbeat: hb, waiting: '0, tick: 2'b11}),
-        .bound_i('{suspect: h_thr, confirm: c_thr, suspect_eff: h_eff, confirm_eff: c_eff,
+        .bound_i('{suspect_eff: h_eff, confirm_eff: c_eff,
                    confirm_src: c_src, wd_class: {3'd1, 3'd1}, default: '0}),
         .status_o(wd_status)
     );

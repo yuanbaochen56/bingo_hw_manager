@@ -35,7 +35,7 @@ bingo_hw_manager_watchdog #(
     .bound_i('{suspect_eff: {2{CW'(20)}},
                confirm_eff: {CW'(WATCHDOG_CONFIRM_TIMEOUT), unit_r_confirm},
                confirm_src: {bingo_hw_manager_pkg::WdConfirmParam, unit_r_src},
-               risk_confirm: effective_r, default: '0}),
+               default: '0}),
     .status_o(unit_status)
 );
 

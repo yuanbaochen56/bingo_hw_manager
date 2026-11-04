@@ -216,19 +216,18 @@ module bingo_hw_manager_top #(
     input  device_axi_lite_data_t               bingo_hw_manager_park_req_i = '0,
     output device_axi_lite_data_t               bingo_hw_manager_park_fail_o,
     // Fault precursors (bingo_hw_manager_risk). A heartbeat or done of a busy
-    // core whose watchdog timer reached risk_late is late (0 = off). policy
-    // (bingo_hw_manager_pkg::risk_policy_csr_t):
-    // [3:0] late beats that make a slot at risk (0 = off), [4] park it,
-    // [5] derate its domain, [15:8] derate level. epoch: the counts are
-    // halved every that many cycles (0 = never). clear and risk_o use the
-    // park_req bit order: a set clear bit keeps that slot's count at 0.
+    // core whose watchdog timer reached risk_late is late (0 = off).
+    // policy: [3:0] late beats that make a slot at risk (0 = off), [4] park it,
+    // [5] derate its domain, [15:8] derate level. epoch: the counts are halved every that many cycles (0 = never). 
+    // clear and risk_o use the park_req bit order: a set clear bit keeps that slot's count at 0.
+    
+    //two thresholds from host: risk_late_i and risk_confirm_i
     input  device_axi_lite_data_t               bingo_hw_manager_risk_late_i = '0,
+    input  logic [31:0]                        bingo_hw_manager_risk_confirm_i = '0, 
     input  device_axi_lite_data_t               bingo_hw_manager_risk_policy_i = '0,
-    input  device_axi_lite_data_t               bingo_hw_manager_risk_epoch_i = '0,
-    input  device_axi_lite_data_t               bingo_hw_manager_risk_clear_i = '0,
-    input  logic [31:0]                        bingo_hw_manager_risk_confirm_i = '0,
-    // Runtime type thresholds may only shorten the parameter timeouts.
-    // Zero/invalid entries fall back to the parameters; validate before narrowing.
+    input  device_axi_lite_data_t               bingo_hw_manager_risk_epoch_i = '0, 
+    input  device_axi_lite_data_t               bingo_hw_manager_risk_clear_i = '0, 
+    // Runtime type thresholds
     input  logic [2**CoreTypeIdWidth-1:0][31:0] wd_type_h_i = '0,
     input  logic [2**CoreTypeIdWidth-1:0][31:0] wd_type_c_i = '0,
     // The learned bounds (bingo_hw_manager_wd_adapt): BINGO_WD_ADAPT and
@@ -1465,17 +1464,17 @@ module bingo_hw_manager_top #(
     // Watchdog, threshold selection, and adaptive learning
     //////////////////////////////////////////////////////////////////////
     // Three submodules monitor core progress in normal-clock ticks:
-    //   i_watchdog   times each busy slot from dispatch or heartbeat to done,
-    //                raising dead_suspect, fenced, and late-beat pulses
-    //                (core_available is kept for observation only)
+    //   i_watchdog   monitors each slot's states from dispatch or heartbeat signals   
     //   i_wd_bounds  selects each slot's suspect, confirm, and late thresholds
     //                from parameters, per-type CSRs, risk_confirm, and wd_learned
     //   i_wd_adapt   learns per-(type, class) bounds from completed tasks
-    assign wd_event = '{dispatch:  ready_queue_pop,          
-                        done:      done_q_push,             
-                        heartbeat: heartbeat_valid,          // clears the timer (ignored once fenced)
-                        waiting:   core_status_waiting_task, // only feeds core_available
-                        tick:      ctrl_view.wd_tick};       // slowed down in a slow power domain
+
+    // wd_event is a vector of signals that indicate the events that happen to each slot
+    assign wd_event = '{dispatch:  ready_queue_pop,
+                        done:      done_q_push,
+                        heartbeat: heartbeat_valid,  // from CSR port
+                        waiting:   core_status_waiting_task, // from CSR port
+                        tick:      ctrl_view.wd_tick};
     bingo_hw_manager_watchdog #(
         .NumCores(NUM_CORES_PER_CLUSTER),
         .NumClusters(NUM_CLUSTERS_PER_CHIPLET),
@@ -1493,13 +1492,17 @@ module bingo_hw_manager_top #(
         .rst_ni      ( rst_ni          ),
         .event_i     ( wd_event        ),
         .bound_i     ( wd_bound        ),
-        .fence_req_i ( wd_budget_fence ),
+        .fence_req_i ( wd_budget_fence ), // from wd_budget
         .status_o    ( wd_status       )
     );
-    assign core_available    = wd_status.available;
+
+    // core's state: available -> fenced -> dead_suspect -> late
+    assign core_available    = wd_status.available; // not used in the design
     assign core_dead_suspect = wd_status.dead_suspect;
     assign core_fenced       = wd_status.fenced;
     assign wd_late           = wd_status.late | wd_budget_late;  // fault precursor
+    
+    // top outputs signals 
     assign core_fenced_o = core_fenced;
     assign core_dead_suspect_o = core_dead_suspect;
     assign ready_queue_pending_o = (READY_AND_DONE_QUEUE_INTERFACE_TYPE == 0) ? '0 : ~ready_queue_empty;
@@ -1514,7 +1517,11 @@ module bingo_hw_manager_top #(
                              bingo_hw_manager_risk_confirm_i < WatchdogConfirmTimeoutCycles) ?
                              WatchdogCounterWidth'(bingo_hw_manager_risk_confirm_i) : '0;
 `endif
-    // Thresholds of every slot: parameters, core type, learned, at risk
+    // choose the thresholds of each slot from three sources:
+    // - type_h_i, type_c_i: from host
+    // - risk_i: risk bitmap from ctrl_view
+    // - learned_i: learned bounds from wd_adapt
+    // - learned_i, class_i: learned thresholds in rtl
     bingo_hw_manager_wd_bounds #(
         .NumCores(NUM_CORES_PER_CLUSTER),
         .NumClusters(NUM_CLUSTERS_PER_CHIPLET),

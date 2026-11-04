@@ -612,7 +612,6 @@
 //   confirm_src             where confirm_eff comes from: WdConfirmParam,
 //                           WdConfirmRisk, WdConfirmType or WdConfirmLearned
 //                           (bingo_hw_manager_pkg)
-//   risk_confirm            host confirm threshold for a slot at risk
 //   h_static                static suspect threshold: the core type's H (type_h_i)
 //                           if nonzero and no longer than the parameter, else the
 //                           parameter; caps the learned suspect threshold
@@ -620,13 +619,10 @@
 //                           if fencing is on and it is longer than h_static but no
 //                           longer than the parameter, else the parameter (0:
 //                           fencing off); caps the learned confirm threshold
-//   suspect                 learned suspect threshold if valid, else h_static
-//   confirm                 confirm threshold without the at-risk R: learned if
-//                           shorter, else the core type's (0: the parameter)
 //   late, late_adaptive     late-beat threshold: learned if late_adaptive, else
 //                           the host's global one (0: the global one; off if that
 //                           is 0 too)
-//   risk_valid              confirming is on and risk_confirm lies strictly between
+//   risk_valid              confirming is on and risk_confirm_i lies strictly between
 //                           h_static and c_static (applies while the slot is at
 //                           risk, unless a learned confirm is shorter)
 //   wd_class                class of the task the slot runs (for the log only)
@@ -636,11 +632,8 @@
     logic [(NumCores)-1:0][(NumClusters)-1:0][(CounterWidth)-1:0]  confirm_eff;                         \
     logic [(NumCores)-1:0][(NumClusters)-1:0][(CounterWidth)-1:0]  late_eff;                            \
     logic [(NumCores)-1:0][(NumClusters)-1:0][1:0]                 confirm_src;                         \
-    logic [(CounterWidth)-1:0]                                     risk_confirm;                        \
     logic [(NumCores)-1:0][(NumClusters)-1:0][31:0]                h_static;                            \
     logic [(NumCores)-1:0][(NumClusters)-1:0][31:0]                c_static;                            \
-    logic [(NumCores)-1:0][(NumClusters)-1:0][(CounterWidth)-1:0]  suspect;                             \
-    logic [(NumCores)-1:0][(NumClusters)-1:0][(CounterWidth)-1:0]  confirm;                             \
     logic [(NumCores)-1:0][(NumClusters)-1:0][(CounterWidth)-1:0]  late;                                \
     logic [(NumCores)-1:0][(NumClusters)-1:0]                      late_adaptive;                       \
     logic [(NumCores)-1:0][(NumClusters)-1:0]                      risk_valid;                          \

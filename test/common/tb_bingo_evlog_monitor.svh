@@ -35,7 +35,7 @@ always @(posedge clk_i) begin
                     if (i_dut.core_retired[c][cl] && !old[8][c][cl]) expect_event(11, slot, 0);
                     fence_reason[c][cl] = (i_dut.ctrl_view.risk[c][cl] && i_dut.wd_bound.risk_valid[c][cl] &&
                         risk_confirm[chiplet_idx] != 0) ? 1 :
-                        ((i_dut.wd_bound.confirm[c][cl] != 0) ? 2 : 0);
+                        ((i_dut.wd_bound.confirm_src[c][cl] != bingo_hw_manager_pkg::WdConfirmParam) ? 2 : 0);
                 end
             end
             if (i_dut.cerf_fb_done && i_dut.cerf_fb.req)
