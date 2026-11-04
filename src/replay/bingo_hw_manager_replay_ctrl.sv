@@ -12,49 +12,31 @@
 // Their dep_set still uses the logical core id of the descriptor, so the
 // dependents see the same producer as before.
 //
-// One slot is migrated at a time:
-//   IDLE   pick the lowest fenced slot D that is neither retired nor stuck and
-//          does not wait for another slot (see below)
-//   DRAIN  flush D's ready FIFO; wait until D's done FIFO is empty (a done that
-//          arrived before the fence retires its task normally, no replay)
-//   MOVE   pop D's checkout head and push it to substitute S, chosen per entry
-//          from the entry's logical core and cluster (slot mapping table of
-//          bingo_hw_manager_slot_table, so S may sit in another cluster with level 2);
-//          stall while S is full or the table is written. If no live core may
-//          run the entry, mark D stuck and go back to IDLE.
-//   FINISH mark D retired
-// A substitute S may be fenced while D is only partly moved (e.g. MOVE stalls
-// because S is full, and S is dead as well). D's entries already on S are older
-// than the ones still on D, so moving the rest of D to the next substitute S2
-// before S itself is migrated would put D's newest tasks ahead of its oldest
-// ones on S2. MOVE therefore aborts D (back to IDLE, not retired) as soon as a
-// slot it pushed into is fenced; D waits until every such slot is retired (S's
-// entries, including D's older ones, reached S2 first) and then resumes. If
-// such a slot is stuck, D is marked stuck as well. The wait-for relation is
-// acyclic: D only waits for slots fenced after they received D's entries.
-// While D is partly moved, its checkout output stays held (status_o.hold), so a
-// dummy-set left on D cannot fire before D's moved tasks.
-// Stuck is sticky and final: fenced is sticky, so a missing substitute never
-// appears later. A stuck slot keeps its remaining entries (its checkout queue,
-// bingo_hw_manager_checkout_queue, holds them, except for heads that run on no
-// core: stuck_drain there), and the other fenced slots are still migrated.
-// While a slot is fenced and not retired, the router (bingo_hw_manager_router)
-// holds the new tasks of every fenced logical core, so the migrated (older)
-// tasks of a logical core always enter a substitute before its newer ones.
+// One source core's outstanding tasks are migrated at a time:
+//   IDLE   pick the lowest-index fenced core eligible for migration
+//          (not retired, not stuck, not waiting for another core's migration)
+//   DRAIN  flush its ready FIFO and process dones received before the fence,
+//          so completed tasks are not replayed
+//   MOVE   check whether to finish, yield to a failed substitute, or wait for
+//          the slot mapping table; otherwise apply the selected move_action
+//   FINISH mark the source core retired: migration is complete, execution may
+//          still be pending on its substitutes
+// move_action is combinational: it selects local migration, remote rotation,
+// bounce, protection, stuck, or wait without adding an FSM state or cycle.
 //
 // Level 3 (SubstituteLevelMask[2], remote chiplet): an entry that no live core
 // of the chiplet may run is not stuck if its logical core has a non-zero type
 // that the transport can export (l3_i.type_en) and the entry was not itself
 // imported from another chiplet. MOVE then
-// rotates it: pops D's head and pushes it back to D's tail (step_o.rotate, marked
+// rotates it: pops the source head and pushes it back to its tail (step_o.rotate, marked
 // exported), and an executing entry is also copied to the export FIFO
-// (step_o.exported). D stays the proxy of these entries: the remote done of an
-// exported entry is pushed into D's done FIFO and retires it at D's checkout
-// head, with the normal dep_set, once D is retired. MOVE ends when the head is
+// (step_o.exported). The source stays the proxy: a remote done is pushed into
+// its done FIFO and retires the entry at its checkout head, with the normal
+// dep_set, once the source is retired. MOVE ends when the head is
 // an exported entry (every older entry was moved or rotated). A dummy-set
 // entry is rotated without an export, so it still fires after D's earlier
-// tasks. D's done FIFO may already hold remote dones when an aborted
-// migration resumes, so DRAIN does not wait for it once D rotated an entry.
+// tasks. The source's done FIFO may already hold remote dones when an aborted
+// migration resumes, so DRAIN does not wait for it once an entry was rotated.
 // An entry imported from another chiplet that no live core here may run is
 // bounced instead of stuck: MOVE pops it without a push (step_o.bounce) and
 // bingo_hw_manager_remote_import rejects it to its origin (proxy stuck there).
@@ -86,30 +68,27 @@ module bingo_hw_manager_replay_ctrl #(
 ) (
     input  logic           clk_i,
     input  logic           rst_ni,
-    // Every slot: fenced, its queues (done empty, checkout empty / full, ready
-    // full) and whether its checkout head was imported
+    // Per core: fenced, done empty, checkout empty/full, ready full,
+    // and whether its checkout head was imported.
     input  replay_slot_t   slot_i,
-    // Fields of each checkout head: its logical slot, runs on no core (a dummy,
-    // or an exit absorbed when it moves; task_type 01: checkout only), must
-    // not be replayed (task_type 11), exported by this slot (level 3, rotated)
+    // Per checkout head: logical core/cluster, no_exec (dummy or absorbed exit),
+    // no_replay (task_type 11), and exported (Level-3 proxy entry).
     input  replay_head_t   head_i,
-    // Level 3: per core type (index: CoreTypeId) the export queue has room and
-    // the type has an export target; the reject register takes a bounced entry
+    // Level-3 status for the replay controller:
+    // - export_ready: the export queue has room for another task of this type
+    // - type_en: this core type has an enabled remote export target
+    // - bounce_ready: the reject register can accept a bounced entry
+    // export_ready and type_en are indexed by CoreTypeId.
     input  replay_l3_t     l3_i,
-    // Slot mapping table (bingo_hw_manager_slot_table), indexed by logical
-    // slot, and the cycle it is written
+    // Slot mapping table, indexed by logical core/cluster, and its write cycle.
     input  smt_t           smt_i,
     input  logic           smt_update_i,
-    // One MOVE step: pop the head of (src_core, src_cluster) and push it to
-    // (dst_core, dst_cluster); push_ready also pushes it into the ready queue
-    // of the destination. move: the slot drained by MOVE (its normal checkout
-    // output is held). Level 3: rotate, the step moves the head of the source
-    // back to its tail (dst = src) and, with exported, copies it to the export
-    // FIFO; bounce, it drops the (imported) head without a push and
-    // bingo_hw_manager_remote_import rejects it back to its origin.
+    // One MOVE step: pop the source head and push it to the destination.
+    // push_ready also queues it for execution; rotate returns it to the source
+    // tail, exported copies it to the export FIFO, and bounce only pops it.
     output replay_step_t   step_o,
-    // Every slot: retired, ready queue flushed, checkout output held, stuck,
-    // blocked by replay protection, first executing entry moved
+    // Per core: migration retired, ready flushed, checkout held, stuck,
+    // blocked by replay protection, and first executable entry processed.
     output replay_status_t status_o
 );
     logic [NumCores-1:0][NumClusters-1:0] ready_flush, moving, hold;
@@ -124,19 +103,34 @@ module bingo_hw_manager_replay_ctrl #(
         FINISH
     } replay_state_t;
 
+    // Selected from the current head and readiness; not a registered state.
+    typedef enum logic [2:0] {
+        ACT_WAIT,
+        ACT_LOCAL,
+        ACT_ROTATE,
+        ACT_BOUNCE,
+        ACT_BLOCK,
+        ACT_STUCK
+    } replay_move_action_t;
+
+    replay_move_action_t move_action;
     replay_state_t state_q, state_d;
     logic [CoreIdWidth-1:0]    src_core_q, src_core_d;
     logic [ClusterIdWidth-1:0] src_cluster_q, src_cluster_d;
     logic [NumCores-1:0][NumClusters-1:0] retired_q, retired_d;
     logic [NumCores-1:0][NumClusters-1:0] stuck_q, stuck_d;
     logic [NumCores-1:0][NumClusters-1:0] blocked_q, blocked_d;
+    // Set after processing the first executable head; cleared only by reset.
+    // Later heads have not started, so marked tasks may still move locally.
     logic [NumCores-1:0][NumClusters-1:0] exec_moved_q, exec_moved_d;
     // used_q[s]: slots that received entries of slot s during its (possibly
     // aborted) migration; cleared when s is retired
     logic [NumCores-1:0][NumClusters-1:0][NumCores-1:0][NumClusters-1:0] used_q, used_d;
-    // Slot rotated (exported) at least one entry
+    // Set after any rotation; cleared only by reset. On a resumed migration,
+    // DRAIN must not wait for remote dones held behind the proxy entries.
     logic [NumCores-1:0][NumClusters-1:0] rotated_q, rotated_d;
-    // Per slot: a slot it pushed into is fenced and not retired (wait), or stuck
+    // If a previous substitute fails, migrate its older tasks before resuming
+    // this source. If that substitute is stuck, this source is stuck too.
     logic [NumCores-1:0][NumClusters-1:0] wait_used;
     logic [NumCores-1:0][NumClusters-1:0] stuck_used;
     logic [NumCores-1:0][NumClusters-1:0] partly_moved;
@@ -193,14 +187,50 @@ module bingo_hw_manager_replay_ctrl #(
     logic dst_space;
     logic head_exported;
     logic can_rotate;
+    logic head_replay_blocked;
 
     assign head_no_exec  = head_i.no_exec[src_core_q][src_cluster_q];
     assign head_exported = RemoteEn && head_i.exported[src_core_q][src_cluster_q];
+    // Remote eligibility, independent of whether the export queue has room.
     assign can_rotate    = RemoteEn && !slot_i.imported[src_core_q][src_cluster_q] &&
                            (CoreTypeId[head_logical_core][head_logical_cluster] != '0) &&
                            l3_i.type_en[CoreTypeId[head_logical_core][head_logical_cluster]];
     assign dst_space    = !slot_i.checkout_full[dst_core][dst_cluster] &&
                           (head_no_exec || !slot_i.ready_full[dst_core][dst_cluster]);
+
+    // Block marked tasks that may have started, or would need unsupported
+    // remote recovery. Dummy/absorbed-exit heads do not execute on a core.
+    assign head_replay_blocked =
+        !head_no_exec &&
+        head_i.no_replay[src_core_q][src_cluster_q] &&
+        (!exec_moved_q[src_core_q][src_cluster_q] || !dst_found);
+
+    // Select the head's action in priority order. Backpressure keeps ACT_WAIT;
+    // it must not fall through to ACT_STUCK. FSM guards below take precedence.
+    always_comb begin : move_action_logic
+        move_action = ACT_WAIT;
+
+        if (head_replay_blocked) begin
+            move_action = ACT_BLOCK;
+
+        end else if (!dst_found && can_rotate) begin
+            if (head_no_exec ||
+                l3_i.export_ready[CoreTypeId[head_logical_core][head_logical_cluster]]) begin
+                move_action = ACT_ROTATE;
+            end
+
+        end else if (!dst_found && RemoteEn && slot_i.imported[src_core_q][src_cluster_q]) begin
+            if (l3_i.bounce_ready) begin
+                move_action = ACT_BOUNCE;
+            end
+
+        end else if (!dst_found) begin
+            move_action = ACT_STUCK;
+
+        end else if (dst_space) begin
+            move_action = ACT_LOCAL;
+        end
+    end
 
     always_comb begin
         state_d       = state_q;
@@ -247,45 +277,44 @@ module bingo_hw_manager_replay_ctrl #(
             MOVE: begin
                 moving[src_core_q][src_cluster_q] = 1'b1;
                 if (slot_i.checkout_empty[src_core_q][src_cluster_q] || head_exported) begin
-                    // Everything left (if anything) was rotated: D is its proxy
+                    // No unprocessed heads remain; exported heads are proxies.
                     state_d = FINISH;
                 end else if (wait_used[src_core_q][src_cluster_q]) begin
-                    // A substitute that already holds entries of this slot died:
-                    // migrate it first (see above)
+                    // Let IDLE select the failed substitute and migrate it first.
                     state_d = IDLE;
                 end else if (smt_update_i) begin
-                    // A slot was just fenced: the substitutes are being recomputed
-                end else if (!head_no_exec &&
-                             head_i.no_replay[src_core_q][src_cluster_q] &&
-                             (!exec_moved_q[src_core_q][src_cluster_q] || !dst_found)) begin
-                    // Possibly started, or would need unsupported level-3 recovery.
-                    stuck_d[src_core_q][src_cluster_q] = 1'b1;
-                    blocked_d[src_core_q][src_cluster_q] = 1'b1;
-                    state_d = IDLE;
-                end else if (!dst_found && can_rotate) begin
-                    // Level 3: keep it on D as a remote proxy entry. Pop and push
-                    // in one cycle leave the usage unchanged, so D's fullness
-                    // does not matter.
-                    if (head_no_exec || l3_i.export_ready[CoreTypeId[head_logical_core][head_logical_cluster]]) begin
-                        move_fire = 1'b1;
-                        rotate    = 1'b1;
-                        exported  = !head_no_exec;
-                        rotated_d[src_core_q][src_cluster_q] = 1'b1;
-                    end
-                end else if (!dst_found && RemoteEn && slot_i.imported[src_core_q][src_cluster_q]) begin
-                    // Level 3: an imported entry nobody here may run goes back
-                    // to its origin as a reject
-                    if (l3_i.bounce_ready) begin
-                        move_fire = 1'b1;
-                        bounce    = 1'b1;
-                    end
-                end else if (!dst_found) begin
-                    stuck_d[src_core_q][src_cluster_q] = 1'b1;
-                    state_d = IDLE;
-                end else if (dst_space) begin
-                    move_fire  = 1'b1;
-                    push_ready = !head_no_exec;
-                    used_d[src_core_q][src_cluster_q][dst_core][dst_cluster] = 1'b1;
+                    // Stay here until the substitute mapping is stable.
+                    state_d = MOVE;
+                end else begin
+                    // Apply the action selected for this head.
+                    case (move_action)
+                        ACT_LOCAL: begin
+                            move_fire  = 1'b1;
+                            push_ready = !head_no_exec;
+                            used_d[src_core_q][src_cluster_q][dst_core][dst_cluster] = 1'b1;
+                        end
+                        ACT_ROTATE: begin
+                            move_fire = 1'b1;
+                            rotate    = 1'b1;
+                            exported  = !head_no_exec;
+                            rotated_d[src_core_q][src_cluster_q] = 1'b1;
+                        end
+                        ACT_BOUNCE: begin
+                            move_fire = 1'b1;
+                            bounce    = 1'b1;
+                        end
+                        ACT_BLOCK, ACT_STUCK: begin
+                            stuck_d[src_core_q][src_cluster_q] = 1'b1;
+                            if (move_action == ACT_BLOCK) begin
+                                blocked_d[src_core_q][src_cluster_q] = 1'b1;
+                            end
+                            state_d = IDLE;
+                        end
+                        default: begin
+                            // ACT_WAIT: keep the default inactive outputs.
+                            state_d = MOVE;
+                        end
+                    endcase
                 end
             end
             FINISH: begin

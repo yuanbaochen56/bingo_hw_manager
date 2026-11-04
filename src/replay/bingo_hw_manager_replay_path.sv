@@ -15,8 +15,7 @@
 // sees its exit, and the substitute is not stopped by another core's exit.
 //
 // A MOVE step pops the head of the source slot and pushes it into the
-// destination (into its ready queue as well when it runs on a core); a
-// bounced imported entry is only popped. The moved entry is the source head,
+// destination ; a bounced imported entry is only popped. The moved entry is the source head,
 // an absorbed exit rewritten as a dummy.
 module bingo_hw_manager_replay_path #(
     parameter int unsigned NumCores = 4,
@@ -42,63 +41,70 @@ module bingo_hw_manager_replay_path #(
     // core types level 3 may export
     input  smt_t                          smt_i,
     input  logic [2**CoreTypeIdWidth-1:0] remote_type_en_i,
-    // The heads as the replay controller sees them
+    // The heads to the replay controller
     output replay_head_t                  head_o,
-    // Slot state, for the pending replay
+    // Core state, for the pending replay
     input  slot_state_t                   slot_i,
     // A MOVE step of the replay controller
     input  replay_step_t                  step_i,
-    // ... the entry it moves, and what it does to the queues
+    // ... the head it moves, and what it does to the queues
     output replay_op_t                    op_o,
-    // A slot is fenced, neither retired nor stuck; a MOVE may push into a cluster
+    // A core is fenced, neither retired nor stuck; a MOVE may push into a cluster
     output logic                          pending_o,
     output logic [NumClusters-1:0]        move_cluster_o
 );
     import bingo_hw_manager_pkg::*;
 
-    // The heads as the replay controller sees them (head_o), and what the MOVE does (op_o)
     logic [NumCores-1:0][NumClusters-1:0][CoreIdWidth-1:0]    head_logical_core;
     logic [NumCores-1:0][NumClusters-1:0][ClusterIdWidth-1:0] head_logical_cluster;
     logic [NumCores-1:0][NumClusters-1:0]                     head_no_exec, head_no_replay, head_exported;
     task_desc_t                                               data;
     logic                                                     exit_absorb;
     logic [NumCores-1:0][NumClusters-1:0]                     pop, push, push_ready;
-    assign head_o = '{logical_core:    head_logical_core,
-                      logical_cluster: head_logical_cluster,
-                      no_exec:         head_no_exec,
-                      no_replay:       head_no_replay,
-                      exported:        head_exported};
-    assign op_o   = '{data: data, exit_absorb: exit_absorb, pop: pop, push: push, push_ready: push_ready};
 
+
+     // Parts of head_exit_absorb, per checkout head
+    logic [NumCores-1:0][NumClusters-1:0] head_exec_exit;      // an exit that would run on a core
+    logic [NumCores-1:0][NumClusters-1:0] head_sub_elsewhere;  // L1/L2: substitute is another slot
+    logic [NumCores-1:0][NumClusters-1:0] head_l3_export;      // no substitute, but L3 may export it
     logic [NumCores-1:0][NumClusters-1:0] head_exit_absorb;
+
     always_comb begin : compose_replay_inputs
         for (int unsigned c = 0; c < NumCores; c++) begin
             for (int unsigned cl = 0; cl < NumClusters; cl++) begin
-                automatic int logical_core = int'(checkout_i.head[c][cl].assigned_core_id);
+                automatic int logical_core    = int'(checkout_i.head[c][cl].assigned_core_id);
                 automatic int logical_cluster = int'(checkout_i.head[c][cl].assigned_cluster_id);
                 head_exported[c][cl]        = checkout_i.head_tag[c][cl].exported;
                 head_logical_core[c][cl]    = checkout_i.head[c][cl].assigned_core_id;
                 head_logical_cluster[c][cl] = checkout_i.head[c][cl].assigned_cluster_id;
-                head_exit_absorb[c][cl] = 1'b0;
+                //
+                head_exec_exit[c][cl]     = checkout_i.head[c][cl].is_exit &&
+                                            checkout_i.head[c][cl].task_type != TaskDummy;
+                head_sub_elsewhere[c][cl] = 1'b0;   // defaults: every path assigns (no latch)
+                head_l3_export[c][cl]     = 1'b0;
                 if (logical_core < NumCores && logical_cluster < NumClusters) begin
-                    head_exit_absorb[c][cl] =
-                        checkout_i.head[c][cl].is_exit &&
-                        checkout_i.head[c][cl].task_type != TaskDummy &&
-                        ((smt_i.found[logical_core][logical_cluster] &&
-                          ((smt_i.core[logical_core][logical_cluster] != logical_core) ||
-                           (smt_i.cluster[logical_core][logical_cluster] != logical_cluster))) ||
-                         (RemoteEn && !smt_i.found[logical_core][logical_cluster] &&
-                          !checkout_i.head_imported[c][cl] &&
-                          CoreTypeId[logical_core][logical_cluster] != '0 &&
-                          remote_type_en_i[CoreTypeId[logical_core][logical_cluster]]));
+                    head_sub_elsewhere[c][cl] =
+                        smt_i.found[logical_core][logical_cluster] &&
+                        ((smt_i.core[logical_core][logical_cluster]    != logical_core) ||
+                         (smt_i.cluster[logical_core][logical_cluster] != logical_cluster));
+                    head_l3_export[c][cl] =
+                        RemoteEn &&
+                        !smt_i.found[logical_core][logical_cluster] &&
+                        !checkout_i.head_imported[c][cl] &&
+                        CoreTypeId[logical_core][logical_cluster] != '0 &&
+                        remote_type_en_i[CoreTypeId[logical_core][logical_cluster]];
                 end
-                head_no_exec[c][cl] = (checkout_i.head[c][cl].task_type == TaskDummy) ||
-                                      head_exit_absorb[c][cl];
+                head_exit_absorb[c][cl] = head_exec_exit[c][cl] &&
+                                          (head_sub_elsewhere[c][cl] || head_l3_export[c][cl]);
+
+                head_no_exec[c][cl]   = (checkout_i.head[c][cl].task_type == TaskDummy) ||
+                                        head_exit_absorb[c][cl];
                 head_no_replay[c][cl] = (checkout_i.head[c][cl].task_type == TaskNoReplay);
             end
         end
     end
 
+    //
     assign exit_absorb = head_exit_absorb[step_i.src_core][step_i.src_cluster];
     always_comb begin
         data = checkout_i.head[step_i.src_core][step_i.src_cluster];
@@ -126,13 +132,18 @@ module bingo_hw_manager_replay_path #(
         end
         for (int unsigned cl = 0; cl < NumClusters; cl++) begin
             for (int unsigned c = 0; c < NumCores; c++) begin
-                // A stuck slot is never migrated, so a retired core's new tasks
-                // need not wait for it (its entries could only go to a core of
-                // its own type, and none is live).
+        //
                 if (slot_i.fenced[c][cl] && !slot_i.retired[c][cl] && !slot_i.stuck[c][cl]) begin
                     pending_o = 1'b1;
                 end
             end
         end
     end
+
+    assign head_o = '{logical_core:    head_logical_core,
+                      logical_cluster: head_logical_cluster,
+                      no_exec:         head_no_exec,
+                      no_replay:       head_no_replay,
+                      exported:        head_exported};
+    assign op_o   = '{data: data, exit_absorb: exit_absorb, pop: pop, push: push, push_ready: push_ready};
 endmodule
