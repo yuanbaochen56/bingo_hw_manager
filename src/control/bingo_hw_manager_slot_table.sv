@@ -5,37 +5,7 @@
 // Slot mapping table (SMT) and core parking (bingo_hw_manager_ctrl).
 //
 // SMT: for each logical slot L = (core, cluster), the live substitute that
-// runs L's tasks once L is fenced or parked, or none (smt_o.found = 0). Both
-// bingo_hw_manager_core_remap (new tasks) and bingo_hw_manager_replay_ctrl
-// (outstanding tasks) read it so all tasks of L go to one substitute in order.
-//
-// Entries are registered so a policy can depend on state at the moment of the
-// update without switching a core's substitute later:
-//   SubstitutePolicy 0  lowest live slot of the type (logical cluster first)
-//   SubstitutePolicy 1  least loaded live slot (queue_i.load, logical cluster
-//                       first, lowest index on a tie), sampled on write
-// Spare clusters (sub_cfg_i.spare) are searched before the logical cluster;
-// cross-cluster candidates require a shared partition (sub_cfg_i.partition).
-// If type_cfg_i.fence_fb is set for a core type, its fenced slots take no
-// substitute (leaving tasks to CERF degradation) and cannot be parked. Both
-// sub_cfg_i and fence_fb take effect when an entry is written; set them before
-// the first fence or park.
-//
-// An entry is recomputed after reset or when its slot or current substitute is
-// newly fenced (smt_recompute_o), and is also written on park/unpark commits.
-// With policy 0, removing a slot that is not the chosen one never changes a
-// choice, so the table then equals the combinational choice (checked in
-// simulation). Whenever the table is written, smt_update_o tells readers to
-// wait one cycle.
-//
-// Core parking (park_req_i): a requested live slot that is not another slot's
-// substitute enters HOLD, drains its checkout and ready queues, and picks a
-// live same-type substitute with itself and all HOLD/PARKED slots masked out
-// (never level 3). It then enters PARKED and writes the substitute into the
-// table, or raises park_o.fail until the request drops. Clearing park_req_i
-// enters UNPARK, holding new tasks until queue_i.moved == 0 so no new task
-// overtakes an older one on the substitute, then restores the plain table
-// entry. The states of one slot are kept in bingo_hw_manager_park_fsm.
+// runs L's tasks once L is fenced or parked, or none (smt_o.found = 0). 
 module bingo_hw_manager_slot_table #(
     parameter int unsigned NumCores = 4,
     parameter int unsigned NumClusters = 2,
@@ -58,7 +28,8 @@ module bingo_hw_manager_slot_table #(
     input  logic clk_i,
     input  logic rst_ni,
 
-    // Slot state (fenced); queues (checkout and ready empty, push, moved, load)
+    // -Slot state; 
+    // -Queues (checkout and ready empty, push, moved, load)
     input  slot_state_t                          slot_i,
     input  ctrl_queue_t                          queue_i,
     // Fence fallback per core type, substitute choice, park request per slot

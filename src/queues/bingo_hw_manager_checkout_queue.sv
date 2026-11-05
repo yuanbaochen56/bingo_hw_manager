@@ -2,33 +2,23 @@
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
 // SPDX-License-Identifier: SHL-0.51
 
-// Checkout queue of one physical slot (Core, Cluster) and the rule by which
-// its head leaves.
+// Checkout queue of one physical slot, and the rule by which its head retires.
 //
-// Every task placed on the slot waits here, in dispatch order, until it
-// retires: the head the core runs (or ran) is the oldest entry. An entry
+// Every task placed on the slot waits here, in FIFO order, until it retires or
+// a replay moves it away. The head is the oldest task still here. An entry
 // keeps the logical core and cluster of its descriptor, so a slot may hold
 // tasks of other logical slots (remapped, replayed or imported).
 //
-// Push (at most one source per cycle, in this priority):
-//   - replay: an entry moved from a fenced slot, already checked and CERF-
-//     marked at its first dispatch; a rotation (level 3) pushes it back to
-//     its own slot, marked exported
-//   - import (level 3): a task of another chiplet, run here for it
-//   - route: a new task of the waiting queues; one the CERF skips at
-//     dispatch, or an absorbed exit, enters as a dummy (it runs on no core)
-//
-// The head retires (see retire_kind below):
-//   - a head that ran on a core leaves together with its own done, popped
-//     from the slot's done queue in the same cycle; for an exported head that
-//     is the remote done of the same task
-//   - a head that runs on no core leaves at once, without a done
-//   - nothing leaves a stuck or rejected slot, except heads that run on no
-//     core (stuck_drain); a replay MOVE holds the output while it drains the
-//     queue (replay_i.hold) and pops it itself (replay_i.pop)
-// A retiring head takes its dep_set path: the local dependency matrix (unless
-// its dep_set is disabled), or another chiplet; an imported head instead
-// leaves through the remote done stream back to its origin.
+// Retirement of the head (see retire_kind):
+//   - A task that runs on a core retires with its own done. An exported task
+//     retires with the remote done of the same task.
+//   - A task that runs on no core retires without a done.
+//   - A stuck or rejected slot retires only the heads stuck_drain_o allows.
+//   - A replay MOVE holds the head (replay_i.hold) and pops it itself
+//     (replay_i.pop).
+// A retiring head sends its dep_set, if enabled, to the local dependency matrix
+// or to another chiplet. An imported head sends its done back to its origin
+// instead.
 module bingo_hw_manager_checkout_queue
     import bingo_hw_manager_pkg::*;
 #(
@@ -67,19 +57,18 @@ module bingo_hw_manager_checkout_queue
     input  logic                        clk_i,
     input  logic                        rst_ni,
     input  chip_id_t                    chip_id_i,
-    // Pushes, at most one per cycle: a replayed entry (bingo_hw_manager_replay_path,
-    // which also pops or holds the head), an imported task (level 3), a routed
-    // task (bingo_hw_manager_router)
+    // Pushes, at most one source per cycle: a replayed entry (bingo_hw_manager_replay_path), 
+    // an imported task (level 3), or a routed task (bingo_hw_manager_router)
     input  checkout_replay_t            replay_i,
     input  checkout_import_t            import_i,
     input  checkout_route_t             route_i,
     // The entry pushed this cycle, and the head leaving (retired or moved)
     output checkout_entry_t             push_o,
     output logic                        pop_o,
-    // Occupancy; the head
+    // Occupancy; the head the core runs (or ran) on
     output checkout_occ_t               occ_o,
     output checkout_head_t              head_o,
-    // Slot state: this slot stuck (no live core may run its head) or rejected
+    // Core state: this core stuck (no live core may run its head) or rejected
     // (level 3), and the retired logical slots (foreign heads); the CERF
     input  slot_state_t                 slot_i,
     input  logic [31:0]                 cerf_state_i,
@@ -124,6 +113,9 @@ module bingo_hw_manager_checkout_queue
     assign done_empty   = done_i.empty[Core][Cluster];
     assign done_task_id = done_i.head[Core][Cluster].task_id;
 
+    //////////////////////////////////////////////////////////////////////
+    // Queue storage
+    //////////////////////////////////////////////////////////////////////
     fifo_v3 #(
         .FALL_THROUGH ( 1'b0          ),
         .DEPTH        ( FifoDepth     ),
@@ -161,23 +153,18 @@ module bingo_hw_manager_checkout_queue
             .data_o      ( head_tag                         ),
             .pop_i       ( pop_o                            )
         );
-        always_comb begin
-            push_tag = '0;
-            if (replay_i.push) begin
-                push_tag = replay_i.tag;
-                if (replay_i.rotate) push_tag.exported = 1'b1;
-            end else if (import_i.valid) begin
-                push_tag = import_i.tag;
-            end else begin
-                push_tag.exported = route_i.remote;
-            end
-        end
     end else begin : gen_checkout_no_remote
         assign full     = full_raw;
-        assign push_tag = '0;
         assign head_tag = '0;
     end
     assign head_imported = RemoteEn && head_tag.imported;
+
+    //////////////////////////////////////////////////////////////////////
+    // Push
+    //////////////////////////////////////////////////////////////////////
+    assign push = route_i.valid | replay_i.push | import_i.valid;
+    assign exit_absorb = (route_i.valid && route_i.exit_absorb) ||
+                         (replay_i.push && replay_i.exit_absorb);
 
     // CERF: if task is conditionally skipped, mark as dummy (TaskDummy)
     // so checkout logic fires dep_set without done_queue match
@@ -195,18 +182,26 @@ module bingo_hw_manager_checkout_queue
             end
         end
     end
-    assign push = route_i.valid | replay_i.push | import_i.valid;
-    assign exit_absorb = (route_i.valid && route_i.exit_absorb) ||
-                         (replay_i.push && replay_i.exit_absorb);
-    // Pop on the handshake only: the downstream arbiters may raise ready without
-    // valid, which would retire an executing head before its done arrived.
-    // While a replay MOVE drains this queue, only the replay controller pops it
-    // (valid is held low then). A stuck slot keeps its remaining entries: a
-    // dummy-set among them must not fire before its lost source task
-    // (only heads that run on no core leave it, see stuck_drain).
-    // An imported head retires into the remote done stream instead.
-    assign pop_o = retire_fire || replay_i.pop;
+    // Level 3: the side tag of the entry
+    if (RemoteEn) begin : gen_push_tag
+        always_comb begin
+            push_tag = '0;
+            if (replay_i.push) begin
+                push_tag = replay_i.tag;
+                if (replay_i.rotate) push_tag.exported = 1'b1;
+            end else if (import_i.valid) begin
+                push_tag = import_i.tag;
+            end else begin
+                push_tag.exported = route_i.remote;
+            end
+        end
+    end else begin : gen_no_push_tag
+        assign push_tag = '0;
+    end
 
+    //////////////////////////////////////////////////////////////////////
+    // Stuck drain
+    //////////////////////////////////////////////////////////////////////
     // A stuck or rejected slot runs nothing more. Its head may still retire
     // the way a skipped task does (dep_set, no done) when it never runs on
     // a core anyway (dummy-set, or skipped at dispatch) or when the CERF
@@ -240,6 +235,10 @@ module bingo_hw_manager_checkout_queue
     assign stuck_head_skip_o = stuck_drain_o && head.cond_exec_en &&
         (head.cond_exec_invert ? cerf_state_i[head.cond_exec_group_id] :
                                  !cerf_state_i[head.cond_exec_group_id]);
+
+    //////////////////////////////////////////////////////////////////////
+    // Retire rule
+    //////////////////////////////////////////////////////////////////////
     // An executing task (normal / gating) only leaves the checkout queue with its
     // own done, for the local and the chiplet dep_set path alike.
     assign head_exec = ((head.task_type == TaskNormal) || (head.task_type == TaskGating) ||
@@ -275,17 +274,15 @@ module bingo_hw_manager_checkout_queue
     end
     assign retire_valid = (retire_kind != RetireNone);
 
+    //////////////////////////////////////////////////////////////////////
+    // Retire paths
+    //////////////////////////////////////////////////////////////////////
     // An imported head retires into the remote done stream, any other into its dep_set path
     logic       set_valid, set_ready;
     logic [1:0] set_oup_valid, set_oup_ready;
-    logic       local_valid, local_ready, local_drop;
+    logic       local_ready, local_drop;
     assign set_valid         = retire_valid && !head_imported;
     assign remote_done_valid = retire_valid && head_imported;
-    assign retire_fire = (set_valid && set_ready) || (remote_done_valid && retire_i.remote_done);
-    // The done of a head that ran leaves with it. Popping on the dep-matrix
-    // arbiter's ready instead left the done behind when the head took another
-    // path, so the next task retired on it prematurely.
-    assign done_pop_o = retire_fire && (retire_kind == RetireWithDone);
 
     // [0]: local dep set, [1]: chiplet dep set
     stream_demux #(
@@ -316,4 +313,18 @@ module bingo_hw_manager_checkout_queue
         .valid_o ( local_set_valid ),
         .ready_i ( retire_i.local_set )
     );
+
+    assign retire_fire = (set_valid && set_ready) || (remote_done_valid && retire_i.remote_done);
+    // The done of a head that ran leaves with it. Popping on the dep-matrix
+    // arbiter's ready instead left the done behind when the head took another
+    // path, so the next task retired on it prematurely.
+    assign done_pop_o = retire_fire && (retire_kind == RetireWithDone);
+    // Pop on the handshake only: the downstream arbiters may raise ready without
+    // valid, which would retire an executing head before its done arrived.
+    // While a replay MOVE drains this queue, only the replay controller pops it
+    // (valid is held low then). A stuck slot keeps its remaining entries: a
+    // dummy-set among them must not fire before its lost source task
+    // (only heads that run on no core leave it, see stuck_drain).
+    // An imported head retires into the remote done stream instead.
+    assign pop_o = retire_fire || replay_i.pop;
 endmodule

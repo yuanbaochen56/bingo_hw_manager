@@ -11,17 +11,6 @@
 //   LevelMask[1] (level 2) slots of the other clusters, enabled by core type,
 //                          in a cluster that part_ok_i allows (e.g. the same
 //                          partition)
-// (Level 3, another chiplet, is chosen elsewhere.) The candidates are searched
-// in three passes; the first pass that has one decides:
-//   PassSpare          the spare clusters (spare_i), in index order
-//   PassOwnCluster     the logical cluster (level 1)
-//   PassOtherClusters  the other clusters (level 2), in index order
-// Within a pass the lowest index wins (clusters, then cores). With LeastWeight
-// the candidate of the pass with the lowest weight_i wins instead (e.g. its
-// queue occupancy), the lowest index on a tie.
-// bingo_hw_manager_slot_table
-// keeps the choice in the slot mapping table, so all tasks of one dead core go
-// to the same substitute even when the weights change.
 module bingo_hw_manager_substitute_sel #(
     parameter int unsigned NumCores = 4,
     parameter int unsigned NumClusters = 2,
@@ -62,29 +51,34 @@ module bingo_hw_manager_substitute_sel #(
     always_comb begin
         for (int unsigned c = 0; c < NumCores; c++) begin
             for (int unsigned cl = 0; cl < NumClusters; cl++) begin
-                candidate[c][cl] = logical_in_range && !fenced_i[c][cl] &&
-                    (((c == int'(logical_core_i)) && (cl == int'(logical_cluster_i))) ||
-                     ((logical_type != '0) && (CoreTypeId[c][cl] == logical_type) &&
-                      ((cl == int'(logical_cluster_i)) ? LevelMask[0] :
-                       (LevelMask[1] && L2TypeEn[logical_type] && part_ok_i[cl]))));
+                automatic logic own_cluster, is_logical, same_type, level_ok;
+
+                own_cluster = (cl == int'(logical_cluster_i));
+                is_logical = own_cluster && (c == int'(logical_core_i));
+                same_type = (logical_type != '0) && (CoreTypeId[c][cl] == logical_type);
+                level_ok = (own_cluster ? LevelMask[0] :
+                    (LevelMask[1] && L2TypeEn[logical_type] && part_ok_i[cl]));
+
+                candidate[c][cl] = logical_in_range && !fenced_i[c][cl] && (is_logical || (same_type && level_ok));
             end
         end
     end
 
-    // The search passes, in order (see above)
-    localparam int unsigned PassSpare         = 0;
-    localparam int unsigned PassOwnCluster    = 1;
-    localparam int unsigned PassOtherClusters = 2;
+    // The search passes, in order; the first pass that has a candidate decides
+    localparam int unsigned PassSpare         = 0;  // the spare clusters (spare_i)
+    localparam int unsigned PassOwnCluster    = 1;  // the logical cluster (level 1)
+    localparam int unsigned PassOtherClusters = 2;  // the other clusters (level 2)
 
-    // A cluster is searched in a pass: spare = it is a spare cluster, own = it
-    // is the logical cluster
-    function automatic logic in_pass(int unsigned pass, logic spare, logic own);
-        unique case (pass)
-            PassSpare:      return spare;
-            PassOwnCluster: return own;
-            default:        return !own;  // PassOtherClusters
-        endcase
-    endfunction
+    // pass_en[pass][cl]: cluster cl is searched in that pass
+    logic [PassOtherClusters:0][NumClusters-1:0] pass_en;
+
+    always_comb begin
+        for (int unsigned cl = 0; cl < NumClusters; cl++) begin
+            pass_en[PassSpare][cl]         = spare_i[cl];
+            pass_en[PassOwnCluster][cl]    = (cl == int'(logical_cluster_i));
+            pass_en[PassOtherClusters][cl] = (cl != int'(logical_cluster_i));
+        end
+    end
 
     // Scanning upwards, a candidate replaces the current choice only if nothing
     // was found yet or (LeastWeight) its weight is lower, so the lowest index
@@ -99,7 +93,7 @@ module bingo_hw_manager_substitute_sel #(
             if (!found_o) begin
                 for (int unsigned cl = 0; cl < NumClusters; cl++) begin
                     for (int unsigned c = 0; c < NumCores; c++) begin
-                        if (candidate[c][cl] && in_pass(pass, spare_i[cl], cl == int'(logical_cluster_i)) &&
+                        if (candidate[c][cl] && pass_en[pass][cl] &&
                             (!found_o || (LeastWeight && (weight_i[c][cl] < best_weight)))) begin
                             found_o     = 1'b1;
                             core_o      = CoreIdWidth'(c);

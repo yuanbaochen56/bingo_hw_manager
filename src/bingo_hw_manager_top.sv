@@ -1544,8 +1544,8 @@ module bingo_hw_manager_top #(
         .class_i        ( wd_class_q                      ),
         .bound_o        ( wd_bound                        )
     );
-    // Latched when a slot takes its next task (ready queue pop): the task's
-    // class (wd_class_q) and whether it runs away from its own logical slot
+    // Latched when a core takes its next task (ready queue pop): the task's
+    // class (wd_class_q) and whether it runs away from its own logical core
     // (wd_moved_q)
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
@@ -1580,8 +1580,12 @@ module bingo_hw_manager_top #(
         .CoreTypeIdWidth(CoreTypeIdWidth), .CoreMask(WatchdogCoreMask), .CoreTypeId(CoreTypeId),
         .wd_est_t(wd_est_t)
     ) i_wd_est (
-        .clk_i(clk_i), .rst_ni(rst_ni), .we_i(wd_est_we_i), .data_i(wd_est_wr),
-        .class_i(wd_class_q), .est_o(wd_est)
+        .clk_i(clk_i), 
+        .rst_ni(rst_ni), 
+        .we_i(wd_est_we_i), 
+        .data_i(wd_est_wr),
+        .class_i(wd_class_q), 
+        .est_o(wd_est)
     );
     bingo_hw_manager_wd_adapt #(
         .NumCores(NUM_CORES_PER_CLUSTER), .NumClusters(NUM_CLUSTERS_PER_CHIPLET),
@@ -1591,11 +1595,17 @@ module bingo_hw_manager_top #(
         .wd_event_t(wd_event_t), .wd_status_t(wd_status_t),
         .wd_task_t(wd_task_t), .wd_learned_t(wd_learned_t), .wd_est_t(wd_est_t)
     ) i_wd_adapt (
-        .clk_i(clk_i), .rst_ni(rst_ni), .ctrl_i(wd_adapt_csr),
+        .clk_i(clk_i), 
+        .rst_ni(rst_ni), 
+        .ctrl_i(wd_adapt_csr),
         .late_ctrl_i(wd_late_csr),
-        .event_i(wd_event), .status_i(wd_status), .task_i(wd_task),
-        .h_eff_i(wd_bound.h_static), .c_eff_i(wd_bound.c_static),
-        .est_i(wd_est), .est_floor_i(wd_budget_csr.est_floor),
+        .event_i(wd_event), 
+        .status_i(wd_status), 
+        .task_i(wd_task),
+        .h_eff_i(wd_bound.h_static), 
+        .c_eff_i(wd_bound.c_static),
+        .est_i(wd_est), 
+        .est_floor_i(wd_budget_csr.est_floor),
         .learned_o(wd_learned)
     );
     bingo_hw_manager_wd_budget #(
@@ -1604,10 +1614,16 @@ module bingo_hw_manager_top #(
         .wd_event_t(wd_event_t), .wd_status_t(wd_status_t), .wd_task_t(wd_task_t),
         .wd_est_t(wd_est_t)
     ) i_wd_budget (
-        .clk_i(clk_i), .rst_ni(rst_ni), .ctrl_i(wd_budget_csr),
+        .clk_i(clk_i), 
+        .rst_ni(rst_ni), 
+        .ctrl_i(wd_budget_csr),
         .late_ctrl_i(wd_late_csr),
-        .event_i(wd_event), .status_i(wd_status), .task_i(wd_task), .est_i(wd_est),
-        .fence_o(wd_budget_fence), .late_o(wd_budget_late)
+        .event_i(wd_event), 
+        .status_i(wd_status), 
+        .task_i(wd_task), 
+        .est_i(wd_est),
+        .fence_o(wd_budget_fence), 
+        .late_o(wd_budget_late)
     );
 
 `ifndef SYNTHESIS
@@ -1627,7 +1643,7 @@ module bingo_hw_manager_top #(
 `endif
 
     //////////////////////////////////////////////////////////////////////
-    // Control plane: slot mapping table (substitute of every logical slot)
+    // Control plane: slot mapping table (substitute of every logical core)
     //////////////////////////////////////////////////////////////////////
     logic                                                           smt_update;
     // Parking. The request mask is bit (core + cluster * NUM_CORES).

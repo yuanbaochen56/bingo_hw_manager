@@ -7,27 +7,33 @@
 // - Xiaoling Yi  <xiaoling.yi@kuleuven.be>
 // - Yunhao Deng  <yunhao.deng@kuleuven.be>
 
-// Dependency unit of the manager, between the task queue and the placement:
-//   - every new task (task_i, in order) enters the waiting queue of its core
-//     index; the queue is shared by the clusters (bingo_hw_manager_dep_check_manager
-//     handles one head at a time)
-//   - the head of each waiting queue is checked against the dependency matrix
-//     of its cluster (bingo_hw_manager_dep_matrix; no check without dep_check_en)
-//   - a checked head is offered to the physical cluster the placement chose
-//     for it (offer_cluster_i, bingo_hw_manager_router); a dummy check task is
-//     dropped there, it only waited for its dependencies
-//   - the dependency sets come from the checkout heads that retire (set_i, one
-//     per slot) and from other chiplets (remote_set_i, the head of the chiplet
-//     done mailbox): one per cycle into the matrix of its cluster and the
-//     column of its core
-// Since a waiting queue is shared by the clusters, a head that waits for its
-// dependencies (or that the placement does not take) also holds the tasks of
-// the same core index of the other clusters behind it (head-of-line blocking,
-// see bingo_hw_manager_router).
-// Index order: the ports and the queues are [core] or [core][cluster], as in
-// the top; the dependency matrix nets (dep_check_*, dep_set_*) are
-// [cluster][core], one matrix per cluster (connect_dep_check_for_dep_matrix and
-// connect_dep_set_for_dep_matrix swap the indices).
+// Dependency unit of the manager, between the task queue and the placement.
+//
+// Task path:
+//   1. A new task enters the waiting queue of its core index. There is one
+//      queue per core index, shared by all clusters.
+//   2. The queue head is checked against the dependency matrix of its cluster
+//      (bingo_hw_manager_dep_matrix). A task without dep_check_en skips this
+//      check.
+//   3. A checked head is offered to the physical cluster the placement chose
+//      (offer_cluster_i, bingo_hw_manager_router). A dummy check task is
+//      dropped here: it only waited for its dependencies.
+//
+// Dependency sets:
+//   Sets come from retiring checkout heads (set_i, one per slot) and from other
+//   chiplets (remote_set_i, the head of the chiplet done mailbox). One set per
+//   cycle is written to the matrix of its cluster, in the column of its core.
+//
+// Head-of-line blocking:
+//   A head that waits for its dependencies, or that the placement does not
+//   take, also blocks the tasks behind it in the shared queue, including those
+//   of other clusters (see bingo_hw_manager_router).
+//
+// Index order:
+//   Ports and queues use [core] or [core][cluster], as in the top. The
+//   dependency matrix nets (dep_check_*, dep_set_*) use [cluster][core], with
+//   one matrix per cluster. connect_dep_check_for_dep_matrix and
+//   connect_dep_set_for_dep_matrix swap the indices.
 module bingo_hw_manager_dep_unit #(
     parameter int unsigned NumCores = 4,
     parameter int unsigned NumClusters = 2,

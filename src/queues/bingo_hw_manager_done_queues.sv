@@ -4,8 +4,7 @@
 
 // Done queues: one FIFO per (core, cluster) slot, so the completions of
 // different cores and clusters never block each other. The head of a slot's
-// done queue retires the head of its checkout queue (pop_i, see
-// bingo_hw_manager_checkout_queue).
+// done queue retires the head of its checkout queue.
 //
 // A done enters the queue of the slot named in its done info:
 //   InterfaceType 1: from the CSR port of the cores (csr_done_i), one per cycle

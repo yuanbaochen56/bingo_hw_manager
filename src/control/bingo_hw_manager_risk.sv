@@ -34,12 +34,35 @@ module bingo_hw_manager_risk
     output logic                                      risk_epoch_end_o
 );
 
-    logic [NumCores-1:0][NumClusters-1:0][3:0] risk_cnt_q;
-    logic [NumCores-1:0][NumClusters-1:0]      risk_q;
+    logic [NumCores-1:0][NumClusters-1:0][3:0] risk_cnt_d, risk_cnt_q;
+    logic [NumCores-1:0][NumClusters-1:0]      risk_d, risk_q;
     logic [31:0]                               risk_epoch_cnt_q;
     logic                                      risk_epoch_end;
 
     assign risk_epoch_end = (cfg_i.risk_epoch != '0) && (risk_epoch_cnt_q >= cfg_i.risk_epoch - 1);
+
+    always_comb begin
+        for (int unsigned c = 0; c < NumCores; c++) begin
+            for (int unsigned cl = 0; cl < NumClusters; cl++) begin
+                automatic logic [3:0] cnt;
+
+                // Halve first, then add this cycle's late beat
+                cnt = risk_cnt_q[c][cl];
+                if (risk_epoch_end) cnt = cnt >> 1;
+                if (late_i[c][cl] && (cnt != 4'hf)) cnt = cnt + 1;
+
+                risk_cnt_d[c][cl] = cnt;
+                risk_d[c][cl]     = risk_q[c][cl] ||
+                                    ((cfg_i.risk_thresh != '0) && (cnt >= cfg_i.risk_thresh));
+
+                // A clear or a fence wins
+                if (fenced_i[c][cl] || risk_clear_i[c][cl]) begin
+                    risk_cnt_d[c][cl] = '0;
+                    risk_d[c][cl]     = 1'b0;
+                end
+            end
+        end
+    end
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
@@ -51,20 +74,8 @@ module bingo_hw_manager_risk
             // only while epochs run, or to clear it once
             if ((cfg_i.risk_epoch != '0) || (risk_epoch_cnt_q != '0))
                 risk_epoch_cnt_q <= ((cfg_i.risk_epoch == '0) || risk_epoch_end) ? '0 : risk_epoch_cnt_q + 1;
-            for (int unsigned c = 0; c < NumCores; c++) begin
-                for (int unsigned cl = 0; cl < NumClusters; cl++) begin
-                    if (fenced_i[c][cl] || risk_clear_i[c][cl]) begin
-                        risk_cnt_q[c][cl] <= '0;
-                        risk_q[c][cl]     <= 1'b0;
-                    end else begin
-                        automatic logic [3:0] cnt = risk_cnt_q[c][cl];
-                        if (risk_epoch_end) cnt = cnt >> 1;
-                        if (late_i[c][cl] && (cnt != 4'hf)) cnt = cnt + 1;
-                        risk_cnt_q[c][cl] <= cnt;
-                        if ((cfg_i.risk_thresh != '0) && (cnt >= cfg_i.risk_thresh)) risk_q[c][cl] <= 1'b1;
-                    end
-                end
-            end
+            risk_cnt_q <= risk_cnt_d;
+            risk_q     <= risk_d;
         end
     end
     assign risk_o           = risk_q;

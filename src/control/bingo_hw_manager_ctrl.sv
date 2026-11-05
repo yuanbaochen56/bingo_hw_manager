@@ -19,22 +19,6 @@
 //                                   a slot (stuck or rejected)
 // This module joins them and keeps the simulation prints of the control plane
 // ([BINGO_RECOVERY_HOLD], [BINGO_LATE], [BINGO_RISK], [BINGO_CERF_FB]).
-//
-// The ports are grouped into structs by where they come from and go to: the
-// fixed-width ones (cfg_i, pm_i) are in bingo_hw_manager_pkg, the slot
-// vectors are macros of bingo_hw_manager/typedef.svh that the top hands down
-// as type parameters (each field is indexed [core][cluster]).
-//
-// Fault precursors and their actions: a slot whose late beats (late_i) add up
-// faster than they decay is at risk until the host clears it
-// (host_i.risk_clear) or the slot is fenced.
-// cfg_i.risk_action[0]: an at-risk slot is parked as if the host had asked for
-// it (same path, same park_o.fail); clearing the risk moves it back.
-// cfg_i.risk_action[1]: an at-risk slot that is not parked asks the PM to run
-// its domain no faster than the derate level (view_o.derate); with both bits,
-// only once parking has failed. Without parking support (ParkSupported = 0) an
-// at-risk slot is never parked. An at-risk slot may still be picked as the
-// substitute of a fenced one: the fence path is unchanged.
 module bingo_hw_manager_ctrl
     import bingo_hw_manager_pkg::*;
 #(

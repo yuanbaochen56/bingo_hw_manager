@@ -2,22 +2,25 @@
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
 // SPDX-License-Identifier: SHL-0.51
 
-// Ready queue of one physical slot: the ids of the tasks its core may start,
-// in the order it starts them. Only the task id reaches the core.
+// Ready queue of one physical slot: the tasks its core may start, in start
+// order. The core only sees the task id.
 //
-// Push (at most one source per cycle, in this priority): a replayed entry
-// that runs on a core, an imported task (level 3), or a routed task. A routed
-// task is only offered here when it runs on a core (bingo_hw_manager_router
-// drops dummy sets, CERF-skipped tasks, absorbed exits and exports before the
-// queue), and it waits while the queue is full; replayed and imported entries
-// are only pushed when the queue has room.
+// Push sources, never two in the same cycle (each yields to the ones above it
+// before it pushes):
+//   1. Replay: a replayed entry that runs on a core.
+//   2. Route: a routed task that runs on a core. Dummy sets, CERF-skipped
+//      tasks, absorbed exits and exports are dropped in bingo_hw_manager_router.
+//   3. Import: a task imported from another chiplet (level 3).
+// A routed task waits while the queue is full. Replay and import are not gated
+// here: their sources push only when the queue has room.
 //
-// InterfaceType (bingo_hw_manager_top READY_AND_DONE_QUEUE_INTERFACE_TYPE):
-//   1: a FIFO the core reads through the CSR interface (pop_i). The watchdog
-//      class of each task and whether it runs away from its own logical slot
-//      travel next to it (head_o.wd_class, head_o.moved, never in the ready
-//      word), and a replay flushes the queue of a fenced core (flush_i).
-//   0: an AXI-Lite read mailbox at base_addr_i; head_o is 0 and pop_i /
+// InterfaceType (READY_AND_DONE_QUEUE_INTERFACE_TYPE of bingo_hw_manager_top):
+//   1: A FIFO the core reads through the CSR interface (pop_i). Each entry also
+//      carries two fields the core never sees:
+//        head_o.wd_class: the watchdog class of the task
+//        head_o.moved:    the task does not run on its own logical slot
+//      A replay flushes the queue of a fenced core (flush_i).
+//   0: An AXI-Lite read mailbox at base_addr_i. head_o is 0, and pop_i and
 //      flush_i are not used.
 module bingo_hw_manager_ready_queue #(
     parameter int unsigned InterfaceType = 1,
