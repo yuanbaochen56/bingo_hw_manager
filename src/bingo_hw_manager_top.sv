@@ -122,6 +122,8 @@ module bingo_hw_manager_top #(
     parameter type host_axi_lite_data_t = logic [HostAxiLiteDataWidth-1:0],
     parameter type device_axi_lite_addr_t = logic [DeviceAxiLiteAddrWidth-1:0],
     parameter type device_axi_lite_data_t = logic [DeviceAxiLiteDataWidth-1:0],
+    // One bit per (core, cluster) slot
+    parameter type slot_mask_t = logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0],
     // Flat slot id (core + cluster * NUM_CORES_PER_CLUSTER) of the remote interface
     parameter int unsigned RemoteSlotIdWidth = cf_math_pkg::idx_width(NUM_CORES_PER_CLUSTER * NUM_CLUSTERS_PER_CHIPLET),
     parameter int unsigned RemotePeerIdWidth = (RemoteNumPeers > 1) ? $clog2(RemoteNumPeers) : 1,
@@ -178,11 +180,11 @@ module bingo_hw_manager_top #(
     output device_axi_lite_resp_t               [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    ready_queue_axi_lite_resp_o,
     /// CSR Req/Resp Interface: the cores read the ready queue and write the done queue
     input  csr_req_t                            [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_req_i,
-    input  logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_req_valid_i,
-    output logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_req_ready_o,
+    input  slot_mask_t                                                                                       csr_req_valid_i,
+    output slot_mask_t                                                                                       csr_req_ready_o,
     output csr_rsp_t                            [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_rsp_o,
-    output logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_rsp_valid_o,
-    input  logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    csr_rsp_ready_i,
+    output slot_mask_t                                                                                       csr_rsp_valid_o,
+    input  slot_mask_t                                                                                       csr_rsp_ready_i,
     // ==== Host configuration (quad periph registers) and its read-back =====
     /// The interface to the Power Management Module
     // Host configuration interface
@@ -295,19 +297,19 @@ module bingo_hw_manager_top #(
     output logic [PmCountPorts-1:0][bingo_hw_manager_pkg::PmCounters-1:0][31:0] pm_count_o,
     // ==== Status outputs (quad periph status registers) ====================
     // Watchdog: confirmed dead cores (sticky). The system may reset / isolate them.
-    output logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    core_fenced_o,
+    output slot_mask_t                                                                                       core_fenced_o,
     // Replay: a fenced core holds a task that no live core may run (level 3:
     // on this chiplet, or on the remote chiplet that rejected its export)
     output logic                                replay_stuck_o,
     // Sticky no-replay blocks, indexed like core_fenced_o; a subset of stuck.
-    output logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_blocked_o,
+    output slot_mask_t                                                     replay_blocked_o,
     // Watchdog: busy cores without heartbeat for WatchdogHeartbeatTimeoutCycles
     // (not sticky, cleared by a heartbeat or a done)
-    output logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    core_dead_suspect_o,
+    output slot_mask_t                                                                                       core_dead_suspect_o,
     // A ready task waits in the slot's ready queue: lets a reader of the CSR
     // ready queue (which stalls while it is empty) poll without blocking.
     // Always 0 with the AXI-Lite mailbox queues, which have their own status.
-    output logic                                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    ready_queue_pending_o,
+    output slot_mask_t                                                                                       ready_queue_pending_o,
     // Sticky bus errors (SLVERR / DECERR) of the manager's AXI-Lite masters:
     // [0] a task descriptor read (the descriptor is dropped and the fetch
     // stops, bingo_hw_manager_task_queue_master), [1] a write of the PM, [2] the
@@ -648,7 +650,7 @@ module bingo_hw_manager_top #(
     /////////////////////////////////////////////////////////
     // The link takes the dep set of a retiring checkout head for another
     // chiplet; the head of the chiplet mailbox (dep sets of other chiplets)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] chiplet_set_ready;
+    slot_mask_t                                                     chiplet_set_ready;
     bingo_hw_manager_task_desc_full_t                               remote_set;
     logic                                                           remote_set_valid;
     /////////////////////////////////////////////////////////
@@ -660,11 +662,11 @@ module bingo_hw_manager_top #(
     // the placement (bingo_hw_manager_router), per physical cluster
     bingo_hw_manager_task_desc_t [NUM_CORES_PER_CLUSTER-1:0]        waiting_dep_check_task_desc;
     logic                        [NUM_CORES_PER_CLUSTER-1:0]        waiting_dep_check_queue_empty;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] dep_offer_valid;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] dep_offer_ready;
+    slot_mask_t                                                     dep_offer_valid;
+    slot_mask_t                                                     dep_offer_ready;
     // The dependency unit takes the dep set of a retiring checkout head, and
     // the head of the chiplet done mailbox
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] local_set_ready;
+    slot_mask_t                                                     local_set_ready;
     logic                                                           remote_set_ready;
 
     //////////////////////
@@ -672,40 +674,40 @@ module bingo_hw_manager_top #(
     //////////////////////
     // Ready task info
     bingo_hw_manager_ready_task_desc_full_t [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_data_in;
-    logic                                   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_push;
-    logic                                   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_full;
+    slot_mask_t                                                                                       ready_queue_push;
+    slot_mask_t                                                                                       ready_queue_full;
     // ready queue data_o/empty_o/pop_i signals are only for CSR interface.
     // HeMAiA occamy_quad_ctrl.sv.tpl reads ready_queue_pop and ready_queue_data_out by name (QUAD_CTRL_BINGO_*): a rename must be made there too
-    logic                                    [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_pop;
+    slot_mask_t                                                                                        ready_queue_pop;
     bingo_hw_manager_ready_task_desc_full_t  [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_data_out;
-    logic                                    [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] ready_queue_empty;
+    slot_mask_t                                                                                        ready_queue_empty;
 
     //////////////////////
     // Checkout queue signals
     //////////////////////
     bingo_hw_manager_task_desc_t   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_data_out;
     bingo_hw_manager_task_desc_t   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_data_in;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_push;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_pop;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_full;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_empty;
+    slot_mask_t                                                                              checkout_queue_push;
+    slot_mask_t                                                                              checkout_queue_pop;
+    slot_mask_t                                                                              checkout_queue_full;
+    slot_mask_t                                                                              checkout_queue_empty;
     // Level 3: one spare entry lets a replay rotation (pop + push) run on a full queue
     localparam int unsigned CheckoutFifoDepth = CheckoutQueueDepth + (RemoteEn ? 1 : 0);
     localparam int unsigned CheckoutUsageWidth = (CheckoutFifoDepth > 1) ? $clog2(CheckoutFifoDepth) : 1;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_queue_full_raw;
+    slot_mask_t                                                                              checkout_queue_full_raw;
     logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0][CheckoutUsageWidth-1:0] checkout_queue_usage;
     remote_tag_t                   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_remote_tag_in;
     remote_tag_t                   [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_remote_tag_out;
     // Checkout head imported from another chiplet: retires into the remote done stream
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_head_imported;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] remote_head_mismatch;
+    slot_mask_t                                                                              checkout_head_imported;
+    slot_mask_t                                                                              remote_head_mismatch;
     // The head may retire this cycle (bingo_hw_manager_checkout_queue), and the
     // retiring head offered to the local dependency matrix or to another chiplet
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_retire_valid;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_local_set_valid;
-    logic                          [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_chiplet_set_valid;
+    slot_mask_t                                                                              checkout_retire_valid;
+    slot_mask_t                                                                              checkout_local_set_valid;
+    slot_mask_t                                                                              checkout_chiplet_set_valid;
     // Level 3 export (origin side)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]         route_remote_grant;
+    slot_mask_t                                                             route_remote_grant;
     logic                                  replay_rotate;
     remote_export_t                        export_in;
     logic                                  export_push;
@@ -720,7 +722,7 @@ module bingo_hw_manager_top #(
     // Level 3 rejects: executor side (one pending reject), origin side (sticky
     // per proxy slot)
     logic                                                              reject_pending;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    remote_rejected_q;
+    slot_mask_t                                                        remote_rejected_q;
 
     ///////////////////////////////////////
     // Per (Core, Cluster) Done Queue signals
@@ -728,11 +730,11 @@ module bingo_hw_manager_top #(
     // This fully eliminates HOL blocking: completions for different
     // cores AND different clusters drain independently.
     ///////////////////////////////////////
-    logic                             [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] done_q_pop;
-    logic                             [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] done_q_empty;
+    slot_mask_t                                                                                 done_q_pop;
+    slot_mask_t                                                                                 done_q_empty;
     // HeMAiA occamy_quad_ctrl.sv.tpl reads done_q_data_in and done_q_push by name (QUAD_CTRL_BINGO_*): a rename must be made there too
     bingo_hw_manager_done_info_full_t [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] done_q_data_in;
-    logic                             [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] done_q_push;
+    slot_mask_t                                                                                 done_q_push;
     ///////////////////////////////////////
     // Conditional execution (CERF): state and per-core conditional skip signals
     logic [31:0] cerf_state;
@@ -753,9 +755,9 @@ module bingo_hw_manager_top #(
 
     // Core status signals
     ///////////////////////////////////////
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] heartbeat_valid;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_status_waiting_task;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] exited_q;
+    slot_mask_t                                                     heartbeat_valid;
+    slot_mask_t                                                     core_status_waiting_task;
+    slot_mask_t                                                     exited_q;
     // Port structs of slot vectors (bingo_hw_manager/typedef.svh), indexed
     // [core][cluster] like the nets of this module
     `BINGO_HW_MANAGER_TYPEDEF_SLOT_STATE_T(slot_state_t, NUM_CORES_PER_CLUSTER, NUM_CLUSTERS_PER_CHIPLET)
@@ -819,7 +821,7 @@ module bingo_hw_manager_top #(
     slot_state_t                                                    slot_state;
     ctrl_view_t                                                     ctrl_view;
     // Late beats (bingo_hw_manager_watchdog). HeMAiA occamy_quad_ctrl.sv.tpl reads it by name (QUAD_CTRL_BINGO_*): a rename must be made there too
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] wd_late;
+    slot_mask_t                                                     wd_late;
     logic [31:0][7:0]                                               pm_domain_level;
     // Configuration of the PM from the host (the levels are the low bytes of the
     // CSRs), and the power state and configured levels as the control plane
@@ -861,45 +863,45 @@ module bingo_hw_manager_top #(
                       boost_level:  bingo_hw_manager_boost_power_level_i[7:0],
                       derate_level: risk_policy.derate_level,
                       dvfs_level:   bingo_hw_manager_dvfs_ack_i[7:0]};
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_available;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_dead_suspect;
+    slot_mask_t                                                     core_available;
+    slot_mask_t                                                     core_dead_suspect;
     // Confirmed dead (sticky): the slot's ready reads, dones and heartbeats are ignored.
     // HeMAiA occamy_quad_ctrl.sv.tpl reads it by name (QUAD_CTRL_BINGO_*): a rename must be made there too
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_fenced;
+    slot_mask_t                                                     core_fenced;
     // Fenced and all its outstanding tasks moved to other cores (sticky)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_retired;
+    slot_mask_t                                                     core_retired;
     // Checkout queue head executes on a core (normal / gating): retires with its done
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] checkout_head_exec;
+    slot_mask_t                                                     checkout_head_exec;
     // Stuck or rejected slot whose head may still retire without running: its
     // own logical core, nothing of that core elsewhere, not imported
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] stuck_drain;
+    slot_mask_t                                                     stuck_drain;
     // ... and the head is a task the current CERF skips (retires as skipped)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] stuck_head_skip;
+    slot_mask_t                                                     stuck_head_skip;
 
     // Replay (see bingo_hw_manager_replay_ctrl)
     logic                                replay_pending;      // a slot is fenced, neither retired nor stuck
     logic [NUM_CLUSTERS_PER_CHIPLET-1:0] replay_move_cluster; // a MOVE step may push into the cluster
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_ready_flush;
+    slot_mask_t                                                     replay_ready_flush;
     // Checkout output held by the replay controller (being moved or partly moved)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_hold_slot;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_pop;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_push;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_push_ready;
+    slot_mask_t                                                     replay_hold_slot;
+    slot_mask_t                                                     replay_pop;
+    slot_mask_t                                                     replay_push;
+    slot_mask_t                                                     replay_push_ready;
     // The checkout heads as the replay controller sees them (bingo_hw_manager_replay_path)
     replay_head_t                          replay_head;
     // One MOVE step of the replay controller
     replay_step_t                          replay_step;
     logic                                  replay_exit_absorb;
     smt_t                                  smt;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] exit_absorb;
+    slot_mask_t                                                     exit_absorb;
     bingo_hw_manager_assigned_core_id_t    replay_src_core;
     bingo_hw_manager_assigned_cluster_id_t replay_src_cluster;
     // Fenced slot that no live core can take over (sticky); replay_stuck: any
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_stuck_slot;
+    slot_mask_t                                                     replay_stuck_slot;
     logic                                  replay_stuck;
     bingo_hw_manager_task_desc_t           replay_data;
     // Fenced slots whose first executing entry was moved (for top_assert)
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_exec_moved;
+    slot_mask_t                                                     replay_exec_moved;
 
     // Placement of the waiting queue heads (bingo_hw_manager_router): per
     // logical core its physical slot, per physical slot the routed task
@@ -939,9 +941,9 @@ module bingo_hw_manager_top #(
     wd_est_t     wd_est;
     // The total-time budget of each slot (bingo_hw_manager_wd_budget): a fence
     // request for the watchdog and a late beat for the fault precursors
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] wd_budget_fence, wd_budget_late;
+    slot_mask_t                                                     wd_budget_fence, wd_budget_late;
     logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0][WdClassWidth-1:0] wd_class_q, ready_class;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] wd_moved_q, ready_moved;
+    slot_mask_t                                                     wd_moved_q, ready_moved;
     // The waiting queue heads, and the checkout, ready and done queues of every slot
     waiting_t  waiting_heads;
     checkout_t checkout_queue;
@@ -1657,16 +1659,15 @@ module bingo_hw_manager_top #(
     // The table changes this cycle: at init, on a new fence, or on a park or
     // unpark commit
     logic                                                           smt_update;
-    logic                                                           smt_update;
     // Parking. The request mask is bit (core + cluster * NUM_CORES).
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_req;
+    slot_mask_t                                                     park_req;
     // HeMAiA occamy_quad_ctrl.sv.tpl reads risk_clear by name (QUAD_CTRL_BINGO_*): a rename must be made there too
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] risk_clear;
+    slot_mask_t                                                     risk_clear;
     park_t                                                          park;
     // Logical slots with tasks in another core's checkout queue
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_moved;
+    slot_mask_t                                                     park_moved;
     // HOLD or UNPARK: no new task of the slot may be placed
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_block;
+    slot_mask_t                                                     park_block;
     always_comb begin
         for (int unsigned c = 0; c < NUM_CORES_PER_CLUSTER; c++) begin
             for (int unsigned cl = 0; cl < NUM_CLUSTERS_PER_CHIPLET; cl++) begin
@@ -1675,7 +1676,7 @@ module bingo_hw_manager_top #(
         end
     end
     assign park_block = park.hold | park.unpark;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_slot_push;
+    slot_mask_t                                                     park_slot_push;
     // CERF degradation request (ctrl) and the cycle the register file commits it
     cerf_fb_t                    cerf_fb;
     logic                        cerf_fb_done;
@@ -2183,165 +2184,67 @@ module bingo_hw_manager_top #(
     end
 
 `ifndef SYNTHESIS
-    // Simulation-only event log: makes watchdog / remap / replay activity visible
-    // in any flow that simulates this RTL (bingo unit tests and full-system sims).
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_dead_suspect_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_fenced_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] core_retired_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_stuck_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] replay_blocked_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_hold_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_parked_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_fail_log_q;
-    logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_unpark_log_q;
-    always @(posedge clk_i or negedge rst_ni) begin : watchdog_remap_event_log
-        if (!rst_ni) begin
-            core_dead_suspect_log_q <= '0;
-            core_fenced_log_q       <= '0;
-            core_retired_log_q      <= '0;
-            replay_stuck_log_q      <= '0;
-            replay_blocked_log_q    <= '0;
-            park_hold_log_q         <= '0;
-            park_parked_log_q       <= '0;
-            park_fail_log_q         <= '0;
-            park_unpark_log_q       <= '0;
-        end else begin
-            core_dead_suspect_log_q <= core_dead_suspect;
-            park_hold_log_q         <= park.hold;
-            park_parked_log_q       <= park.parked;
-            park_fail_log_q         <= park.fail;
-            park_unpark_log_q       <= park.unpark;
-            core_fenced_log_q       <= core_fenced;
-            core_retired_log_q      <= core_retired;
-            replay_stuck_log_q      <= replay_stuck_slot;
-            replay_blocked_log_q    <= replay_blocked_o;
-            for (int unsigned c = 0; c < NUM_CORES_PER_CLUSTER; c++) begin
-                for (int unsigned cl = 0; cl < NUM_CLUSTERS_PER_CHIPLET; cl++) begin
-                    if (exit_absorb[c][cl]) begin
-                        $display("[BINGO_EXIT_ABSORB] %0t chip=%0d task=%0d logical_core=%0d logical_cluster=%0d core=%0d cluster=%0d",
-                                 $time, chip_id_i, checkout_queue_data_in[c][cl].task_id,
-                                 checkout_queue_data_in[c][cl].assigned_core_id,
-                                 checkout_queue_data_in[c][cl].assigned_cluster_id, c, cl);
-                    end
-                    if ((core_dead_suspect[c][cl] != core_dead_suspect_log_q[c][cl]) ||
-                        (core_fenced[c][cl] != core_fenced_log_q[c][cl])) begin
-                        $display("[BINGO_WD] %0t chip=%0d core=%0d cluster=%0d dead_suspect=%0b fenced=%0b",
-                                 $time, chip_id_i, c, cl, core_dead_suspect[c][cl], core_fenced[c][cl]);
-                    end
-                    if (park.hold[c][cl] && !park_hold_log_q[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d HOLD",
-                                 $time, chip_id_i, c, cl);
-                    end
-                    if (park.parked[c][cl] && !park_parked_log_q[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d PARKED -> core=%0d cluster=%0d",
-                                 $time, chip_id_i, c, cl, smt.core[c][cl], smt.cluster[c][cl]);
-                    end
-                    if (park.fail[c][cl] && !park_fail_log_q[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d FAIL",
-                                 $time, chip_id_i, c, cl);
-                    end
-                    if (park.unpark[c][cl] && !park_unpark_log_q[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d UNPARK (%0d tasks left elsewhere)",
-                                 $time, chip_id_i, c, cl, remap_outstanding_q[c][cl]);
-                    end
-                    if (park_parked_log_q[c][cl] && !park.parked[c][cl] && park_unpark_log_q[c][cl] &&
-                        !core_fenced[c][cl] && !park.fail[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d UNPARKED",
-                                 $time, chip_id_i, c, cl);
-                    end
-                    if ((park_hold_log_q[c][cl] || park_parked_log_q[c][cl]) &&
-                        !park.hold[c][cl] && !park.parked[c][cl] && core_fenced[c][cl]) begin
-                        $display("[BINGO_PARK] %0t chip=%0d core=%0d cluster=%0d dropped, fenced",
-                                 $time, chip_id_i, c, cl);
-                    end
-                    if (core_retired[c][cl] && !core_retired_log_q[c][cl]) begin
-                        $display("[BINGO_RETIRED] %0t chip=%0d core=%0d cluster=%0d",
-                                 $time, chip_id_i, c, cl);
-                    end
-                    if (replay_stuck_slot[c][cl] && !replay_stuck_log_q[c][cl]) begin
-                        $display("[BINGO_REPLAY_STUCK] %0t chip=%0d core=%0d cluster=%0d: no live core may run task %0d (logical core %0d)",
-                                 $time, chip_id_i, c, cl,
-                                 checkout_queue_data_out[c][cl].task_id,
-                                 checkout_queue_data_out[c][cl].assigned_core_id);
-                    end
-                    if (replay_blocked_o[c][cl] && !replay_blocked_log_q[c][cl]) begin
-                        $display("[BINGO_REPLAY_BLOCKED] %0t chip=%0d core=%0d cluster=%0d task=%0d",
-                                 $time, chip_id_i, c, cl, checkout_queue_data_out[c][cl].task_id);
-                    end
-                    if (route.fire[c][cl] &&
-                        ((route.src_core[c][cl] != bingo_hw_manager_assigned_core_id_t'(c)) ||
-                         (waiting_dep_check_task_desc[route.src_core[c][cl]].assigned_cluster_id !=
-                          bingo_hw_manager_assigned_cluster_id_t'(cl)))) begin
-                        $display("[BINGO_REMAP] %0t chip=%0d task=%0d logical_core=%0d -> physical_core=%0d cluster=%0d logical_cluster=%0d",
-                                 $time, chip_id_i,
-                                 waiting_dep_check_task_desc[route.src_core[c][cl]].task_id,
-                                 route.src_core[c][cl], c, cl,
-                                 waiting_dep_check_task_desc[route.src_core[c][cl]].assigned_cluster_id);
-                    end
-                end
-            end
-            if (export_push) begin
-                $display("[BINGO_EXPORT] %0t chip=%0d task=%0d type_id=%0d proxy_slot=%0d (replay %0b)",
-                         $time, chip_id_i, export_in.desc.task_id, export_in.core_type,
-                         export_in.proxy_slot, replay_step.exported);
-            end
-            if (imported.fire) begin
-                $display("[BINGO_IMPORT] %0t chip=%0d task=%0d from chip=%0d proxy_slot=%0d -> core=%0d cluster=%0d (home core=%0d cluster=%0d)",
-                         $time, chip_id_i, imported.desc.task_id, remote_dispatch_origin_chip_i,
-                         remote_dispatch_proxy_slot_i, imported.core, imported.cluster,
-                         imported.home_core, imported.home_cluster);
-            end
-            if (remote_done_valid_o && remote_done_ready_i && !remote_done_reject_o) begin
-                $display("[BINGO_REMOTE_DONE_OUT] %0t chip=%0d task=%0d -> chip=%0d proxy_slot=%0d",
-                         $time, chip_id_i, remote_done_task_id_o, remote_done_chip_o, remote_done_proxy_slot_o);
-            end
-            if (remote_done_valid_i && remote_done_ready_o && !remote_done_reject_i) begin
-                $display("[BINGO_REMOTE_DONE_IN] %0t chip=%0d task=%0d proxy_slot=%0d",
-                         $time, chip_id_i, remote_done_task_id_i, remote_done_proxy_slot_i);
-            end
-            if (imported.reject) begin
-                $display("[BINGO_REMOTE_REJECT_OUT] %0t chip=%0d task=%0d -> chip=%0d proxy_slot=%0d (no live core of its type)",
-                         $time, chip_id_i, imported.desc.task_id, remote_dispatch_origin_chip_i,
-                         remote_dispatch_proxy_slot_i);
-            end
-            if (replay_step.bounce) begin
-                $display("[BINGO_REMOTE_REJECT_OUT] %0t chip=%0d task=%0d -> chip=%0d proxy_slot=%0d (its core died, no other live core)",
-                         $time, chip_id_i, replay_data.task_id,
-                         checkout_remote_tag_out[replay_src_core][replay_src_cluster].origin_chip,
-                         checkout_remote_tag_out[replay_src_core][replay_src_cluster].proxy_slot);
-            end
-            if (done_remote.stray) begin
-                $display("[BINGO_REMOTE_DONE_DROP] %0t chip=%0d task=%0d proxy_slot=%0d reject=%0b: no proxy slot, dropped",
-                         $time, chip_id_i, remote_done_task_id_i, remote_done_proxy_slot_i, remote_done_reject_i);
-            end
-            if (|done_remote.reject) begin
-                $display("[BINGO_REMOTE_REJECT_IN] %0t chip=%0d task=%0d proxy_slot=%0d: the proxy is stuck",
-                         $time, chip_id_i, remote_done_task_id_i, remote_done_proxy_slot_i);
-            end
-            for (int unsigned c = 0; c < NUM_CORES_PER_CLUSTER; c++) begin
-                for (int unsigned cl = 0; cl < NUM_CLUSTERS_PER_CHIPLET; cl++) begin
-                    if (proxy.timeout[c][cl]) begin
-                        $display("[BINGO_REMOTE_TIMEOUT] %0t chip=%0d task=%0d proxy_slot=%0d: no remote done for %0d cycles, the proxy is stuck",
-                                 $time, chip_id_i, checkout_queue_data_out[c][cl].task_id,
-                                 c + cl * NUM_CORES_PER_CLUSTER, proxy.wait_cycles[c][cl]);
-                    end
-                end
-            end
-            if (replay_step.fire && !replay_step.bounce) begin
-                $display("[BINGO_REPLAY] %0t chip=%0d task=%0d type=%0d logical_core=%0d from=%0d to=%0d cluster=%0d to_cluster=%0d logical_cluster=%0d",
-                         $time, chip_id_i, replay_data.task_id, replay_data.task_type,
-                         replay_data.assigned_core_id, replay_src_core, replay_step.dst_core, replay_src_cluster,
-                         replay_step.dst_cluster, replay_data.assigned_cluster_id);
-            end
-        end
-    end
+    // Watchdog, parking, remap, replay and level 3 activity in the simulation
+    // log, and the slot state of the previous cycle for the invariants below
+    slot_state_t slot_log_q;
+    bingo_hw_manager_top_log #(
+        .NumCores          ( NUM_CORES_PER_CLUSTER                            ),
+        .NumClusters       ( NUM_CLUSTERS_PER_CHIPLET                         ),
+        .CoreIdWidth       ( cf_math_pkg::idx_width(NUM_CORES_PER_CLUSTER)    ),
+        .ClusterIdWidth    ( cf_math_pkg::idx_width(NUM_CLUSTERS_PER_CHIPLET) ),
+        .TaskIdWidth       ( TaskIdWidth                                      ),
+        .RemoteSlotIdWidth ( RemoteSlotIdWidth                                ),
+        .OutstandingWidth  ( RemapOutstandingWidth                            ),
+        .task_desc_t       ( bingo_hw_manager_task_desc_t                     ),
+        .remote_export_t   ( remote_export_t                                  ),
+        .chip_id_t         ( chip_id_t                                        ),
+        .slot_state_t      ( slot_state_t                                     ),
+        .park_t            ( park_t                                           ),
+        .smt_t             ( smt_t                                            ),
+        .waiting_t         ( waiting_t                                        ),
+        .route_t           ( route_t                                          ),
+        .checkout_t        ( checkout_t                                       ),
+        .replay_step_t     ( replay_step_t                                    ),
+        .import_t          ( import_t                                         ),
+        .done_remote_t     ( done_remote_t                                    ),
+        .proxy_t           ( proxy_t                                          )
+    ) i_top_log (
+        .clk_i                 ( clk_i                         ),
+        .rst_ni                ( rst_ni                        ),
+        .chip_id_i             ( chip_id_i                     ),
+        .slot_i                ( slot_state                    ),
+        .suspect_i             ( core_dead_suspect             ),
+        .blocked_i             ( replay_blocked_o              ),
+        .park_i                ( park                          ),
+        .smt_i                 ( smt                           ),
+        .outstanding_i         ( remap_outstanding_q           ),
+        .checkout_i            ( checkout_queue                ),
+        .waiting_i             ( waiting_heads                 ),
+        .route_i               ( route                         ),
+        .step_i                ( replay_step                   ),
+        .replay_desc_i         ( replay_data                   ),
+        .export_push_i         ( export_push                   ),
+        .export_i              ( export_in                     ),
+        .imported_i            ( imported                      ),
+        .import_origin_chip_i  ( remote_dispatch_origin_chip_i ),
+        .import_proxy_slot_i   ( remote_dispatch_proxy_slot_i  ),
+        .done_out_valid_i      ( remote_done_valid_o           ),
+        .done_out_ready_i      ( remote_done_ready_i           ),
+        .done_out_reject_i     ( remote_done_reject_o          ),
+        .done_out_task_id_i    ( remote_done_task_id_o         ),
+        .done_out_chip_i       ( remote_done_chip_o            ),
+        .done_out_proxy_slot_i ( remote_done_proxy_slot_o      ),
+        .done_in_valid_i       ( remote_done_valid_i           ),
+        .done_in_ready_i       ( remote_done_ready_o           ),
+        .done_in_reject_i      ( remote_done_reject_i          ),
+        .done_in_task_id_i     ( remote_done_task_id_i         ),
+        .done_in_proxy_slot_i  ( remote_done_proxy_slot_i      ),
+        .done_remote_i         ( done_remote                   ),
+        .proxy_i               ( proxy                         ),
+        .slot_log_o            ( slot_log_q                    )
+    );
 
     // Invariants of the replay, remap and retire paths
-    slot_state_t slot_log_q;
-    assign slot_log_q = '{fenced:   core_fenced_log_q,
-                          retired:  core_retired_log_q,
-                          stuck:    replay_stuck_log_q,
-                          rejected: '0};
     bingo_hw_manager_top_assert #(
         .NumCores           ( NUM_CORES_PER_CLUSTER                            ),
         .NumClusters        ( NUM_CLUSTERS_PER_CHIPLET                         ),

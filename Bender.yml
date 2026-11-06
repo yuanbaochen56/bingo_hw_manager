@@ -73,6 +73,7 @@ sources:
   - src/remote/bingo_hw_manager_remote_import.sv           # Level 3, executor side: imports
   - src/remote/bingo_hw_manager_remote_reply.sv            # Level 3, executor side: dones and rejects back to the origin
   - src/bingo_hw_manager_top_assert.sv                     # Simulation-only invariants of the top
+  - src/bingo_hw_manager_top_log.sv                        # Simulation-only event log of the top
   # Level 2
   - src/bingo_hw_manager_top.sv                            # Top-level module
   - target: test

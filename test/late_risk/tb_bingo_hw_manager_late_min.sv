@@ -7,6 +7,6 @@
 `define TB_DISABLE_CORE_WORKERS 1
 `define TB_LATE_CASE 1
 module tb_bingo_hw_manager_late_min;
-    `include "tb_bingo_hw_manager_late_harness.svh"
+    `include "tb_bingo_hw_manager_harness.svh"
 endmodule
 `undef TB_LATE_CASE
