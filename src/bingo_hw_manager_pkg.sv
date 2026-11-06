@@ -41,7 +41,7 @@ package bingo_hw_manager_pkg;
     localparam logic [1:0] WdConfirmLearned = 2'd3; // the learned C (bingo_hw_manager_wd_adapt)
 
     // CSR words of the host (quad periph registers; the field names are the
-    // register fields). The top's ports stay 32-bit words and are converted once.
+    // register fields). The top takes them grouped in pm_csr_t and wd_risk_csr_t.
 
     // BINGO_WD_ADAPT (bingo_hw_manager_wd_adapt, reset 0: learned H and C off)
     typedef struct packed {
@@ -107,6 +107,58 @@ package bingo_hw_manager_pkg;
 
     // Port structs of fixed width. The ones whose width depends on the
     // parameters of the top are macros in bingo_hw_manager/typedef.svh.
+
+    // Power CSRs of the host, as the words it writes. The levels are clock
+    // dividers (see pm_cfg_t) in the low byte of their word.
+    typedef struct packed {
+        logic [31:0]       enable_idle_pm;   // [0] idle PM on
+        logic [31:0]       pm_mode;          // [0] 1: DVFS, 0: DFS
+        logic [31:0]       idle_level;       // a domain whose slots all wait for a task
+        logic [31:0]       normal_level;     // a busy domain
+        // A domain busy only with accesses from outside; used only if between
+        // the normal and the idle level (all 32 bits compared), else normal
+        logic [31:0]       access_level;
+        // A domain whose core runs a dead core's tasks: a faster divider than
+        // the normal level; 0 disables the boost
+        logic [31:0]       boost_level;
+        logic [31:0]       dvfs_ack;         // DVFS: the level the host has applied
+        // Cycles a core must be idle before it lets its domain drop to the idle
+        // level (bingo_hw_manager_power_view); 0 = at once
+        logic [31:0]       idle_entry_delay;
+        // Cycles a cluster's domain stays awake after the last access from
+        // outside (bingo_hw_manager_power_view); 0 = off
+        logic [31:0]       access_wake_hold;
+        // Cycles the live substitute of a fenced slot does not count as idle
+        // (bingo_hw_manager_power_view); 0 = off
+        logic [31:0]       recovery_hold;
+        boost_policy_csr_t boost_policy;     // which cores get the boost level
+    } pm_csr_t;
+
+    // Watchdog and fault precursor CSRs of the host
+    typedef struct packed {
+        // A heartbeat or done of a busy core whose watchdog timer reached this
+        // is late (bingo_hw_manager_risk); 0 = off
+        logic [31:0]      risk_late;
+        logic [31:0]      risk_confirm;      // confirm threshold R of an at-risk slot
+        risk_policy_csr_t risk_policy;
+        logic [31:0]      risk_epoch;        // the late-beat counts halve every that many cycles (0: never)
+        wd_adapt_csr_t    wd_adapt;
+        wd_late_csr_t     wd_late;
+        wd_budget_csr_t   wd_budget;         // total-time budget against the task-time estimates
+    } wd_risk_csr_t;
+
+    // Observation-only event log (bingo_hw_manager_evlog). clear and pop trigger
+    // once per value change.
+    typedef struct packed {
+        logic        enable;
+        logic [31:0] clear;
+        logic [31:0] pop;
+    } evlog_ctrl_t;
+    typedef struct packed {
+        logic [63:0] head;
+        logic [31:0] count;
+        logic [15:0] dropped;
+    } evlog_status_t;
 
     // Host configuration of the control plane (bingo_hw_manager_ctrl)
     // Substitute choice of the slot mapping table (bingo_hw_manager_slot_table),

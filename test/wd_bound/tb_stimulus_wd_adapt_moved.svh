@@ -54,7 +54,7 @@ initial begin
     wait (rst_ni);
     moved_off = `TB_WD_ADAPT_MOVED_OFF;
     void'($value$plusargs("MOVED_OFF=%d", moved_off));
-    force gen_dut[0].i_dut.bingo_hw_manager_wd_late_i = moved_off ? 32'h0 : 32'h1c0;
+    wd_late[0] = moved_off ? 32'h0 : 32'h1c0;
     wd_type_h[0][1] = 200; wd_type_c[0][1] = 600;
     // EN, SH_H 1, SH_C 2, WARMUP 1, FLOOR 1: the learned term sets the thresholds
     wd_adapt[0] = (1 << 12) | (1 << 8) | (2 << 5) | (1 << 2) | 1;
@@ -117,7 +117,7 @@ initial begin
     repeat (20) @(posedge clk_i);
     if (gen_dut[0].i_dut.replay_stuck_o)
         $fatal(1, "[ADAPT_MOVED] recovery stuck");
-    release gen_dut[0].i_dut.bingo_hw_manager_wd_late_i;
+    wd_late[0] = 0;
     $display("Moved execution tests passed off=%0d M=%0d samples=%0d", moved_off, m, learned);
     $finish;
 end

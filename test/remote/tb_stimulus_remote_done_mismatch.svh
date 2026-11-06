@@ -22,7 +22,7 @@ end
 
 initial begin : remote_done_mismatch_test
     automatic axi_pkg::resp_t resp;
-    force gen_dut[0].i_dut.remote_done_task_id_i = 12'd99;
+    force gen_dut[0].i_dut.remote_done_i.task_id = 12'd99;
     wait (rst_ni);
     repeat (20) @(posedge clk_i);
     for (int i = 1; i <= 6; i++) if (i inside {1, 2, 4, 6}) task_queue_master[0].write(task_queue_base[0], '0, dm[i], '1, resp);

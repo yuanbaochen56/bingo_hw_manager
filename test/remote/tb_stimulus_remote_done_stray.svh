@@ -32,9 +32,9 @@ task automatic stray_done(input int unsigned slot, input int unsigned tid, input
     stray_tid    = TaskIdWidth'(tid);
     stray_reject = reject;
     force gen_dut[0].i_dut.remote_done_valid_i      = 1'b1;
-    force gen_dut[0].i_dut.remote_done_proxy_slot_i = stray_slot;
-    force gen_dut[0].i_dut.remote_done_task_id_i    = stray_tid;
-    force gen_dut[0].i_dut.remote_done_reject_i     = stray_reject;
+    force gen_dut[0].i_dut.remote_done_i.proxy_slot = stray_slot;
+    force gen_dut[0].i_dut.remote_done_i.task_id    = stray_tid;
+    force gen_dut[0].i_dut.remote_done_i.reject     = stray_reject;
     #1;
     if (gen_dut[0].i_dut.remote_done_ready_o !== 1'b1) begin
         $error("[DONE_STRAY] %s of task %0d for slot %0d not accepted (the link would block)",
@@ -42,9 +42,9 @@ task automatic stray_done(input int unsigned slot, input int unsigned tid, input
     end
     @(negedge clk_i);
     release gen_dut[0].i_dut.remote_done_valid_i;
-    release gen_dut[0].i_dut.remote_done_proxy_slot_i;
-    release gen_dut[0].i_dut.remote_done_task_id_i;
-    release gen_dut[0].i_dut.remote_done_reject_i;
+    release gen_dut[0].i_dut.remote_done_i.proxy_slot;
+    release gen_dut[0].i_dut.remote_done_i.task_id;
+    release gen_dut[0].i_dut.remote_done_i.reject;
 endtask
 
 initial begin : chip0_stray_then_push

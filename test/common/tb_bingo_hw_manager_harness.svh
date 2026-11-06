@@ -18,6 +18,7 @@
 
 `timescale 1ns/1ps
 `include "axi/typedef.svh"
+`include "bingo_hw_manager/typedef.svh"
 `include "axi/assign.svh"
 `include "axi/port.svh"
 
@@ -731,6 +732,12 @@ endtask
 // ---------------------------------------------------------------------------
 localparam int unsigned REMOTE_SLOT_W = cf_math_pkg::idx_width(NUM_CORES_PER_CLUSTER * NUM_CLUSTERS_PER_CHIPLET);
 localparam host_axi_lite_addr_t REMOTE_LINK_BASE = 48'h5000_0000;  // 8 KiB: dispatch page, done page
+typedef logic [REMOTE_SLOT_W-1:0] tb_remote_slot_t;
+typedef logic [TaskIdWidth-1:0]   tb_task_id_t;
+`BINGO_HW_MANAGER_TYPEDEF_REMOTE_DISPATCH_T(tb_remote_dispatch_t, host_axi_lite_data_t, chip_id_t, tb_remote_slot_t, 4)
+`BINGO_HW_MANAGER_TYPEDEF_REMOTE_DONE_T(tb_remote_done_t, chip_id_t, tb_remote_slot_t, tb_task_id_t)
+tb_remote_dispatch_t rd_out  [NUM_CHIPLET];
+tb_remote_done_t     rdn_out [NUM_CHIPLET];
 // Outputs of chiplet i
 logic                     rd_valid       [NUM_CHIPLET];
 logic                     rd_ready       [NUM_CHIPLET];
@@ -779,6 +786,14 @@ int unsigned              remote_max_outstanding [NUM_CHIPLET];
 for (genvar i = 0; i < NUM_CHIPLET; i++) begin : gen_remote_link
     localparam int unsigned Pred = (i + NUM_CHIPLET - 1) % NUM_CHIPLET;
     localparam int unsigned Succ = (i + 1) % NUM_CHIPLET;
+    assign rd_desc[i]        = rd_out[i].desc;
+    assign rd_core_type[i]   = rd_out[i].core_type;
+    assign rd_origin_chip[i] = rd_out[i].origin_chip;
+    assign rd_proxy_slot[i]  = rd_out[i].proxy_slot;
+    assign rdn_chip[i]       = rdn_out[i].chip;
+    assign rdn_proxy_slot[i] = rdn_out[i].proxy_slot;
+    assign rdn_task_id[i]    = rdn_out[i].task_id;
+    assign rdn_reject[i]     = rdn_out[i].reject;
     if (`TB_REMOTE_LINK != 2) begin : gen_direct
         // chiplet i exports to Succ and gets the dones of its exports from Succ
         assign rd_in_valid[i]       = (`TB_REMOTE_LINK != 0) && rd_valid[Pred];
@@ -885,6 +900,15 @@ if (`TB_REMOTE_LINK == 2) begin : gen_rlink
         // (TB_REMOTE_PRED_TYPES: to the predecessor)
         localparam logic [15:0][ChipIdWidth:0] Targets = rl_targets(Succ, Pred);
         logic [RlNumPeers-1:0][$clog2(`TB_REMOTE_CREDITS + 1)-1:0] credits;
+        tb_remote_dispatch_t link_import;
+        tb_remote_done_t     link_done;
+        assign rd_in_desc[i]        = link_import.desc;
+        assign rd_in_core_type[i]   = link_import.core_type;
+        assign rd_in_origin_chip[i] = link_import.origin_chip;
+        assign rd_in_proxy_slot[i]  = link_import.proxy_slot;
+        assign rdn_in_proxy_slot[i] = link_done.proxy_slot;
+        assign rdn_in_task_id[i]    = link_done.task_id;
+        assign rdn_in_reject[i]     = link_done.reject;
         assign rl_addr_map[i] = '{idx: i, start_addr: {8'(i), REMOTE_LINK_BASE[39:0]},
                                   end_addr: {8'(i), REMOTE_LINK_BASE[39:0] + 40'h2000}};
         bingo_hw_manager_remote_link #(
@@ -899,7 +923,9 @@ if (`TB_REMOTE_LINK == 2) begin : gen_rlink
             .RemoteTargetChip  ( Targets               ),
             .DispatchCredits   ( `TB_REMOTE_CREDITS    ),
             .req_t             ( host_req_t            ),
-            .resp_t            ( host_resp_t           )
+            .resp_t            ( host_resp_t           ),
+            .dispatch_t        ( tb_remote_dispatch_t  ),
+            .done_t            ( tb_remote_done_t      )
         ) i_link (
             .clk_i                 ( clk_i                ),
             .rst_ni                ( rst_ni               ),
@@ -907,27 +933,16 @@ if (`TB_REMOTE_LINK == 2) begin : gen_rlink
             .base_addr_i           ( REMOTE_LINK_BASE     ),
             .export_valid_i        ( rd_valid[i]          ),
             .export_ready_o        ( rd_in_ready[i]       ),
-            .export_desc_i         ( rd_desc[i]           ),
-            .export_core_type_i    ( rd_core_type[i]      ),
-            .export_origin_chip_i  ( rd_origin_chip[i]    ),
-            .export_proxy_slot_i   ( rd_proxy_slot[i]     ),
+            .export_i              ( rd_out[i]            ),
             .done_out_valid_i      ( rdn_valid[i]         ),
             .done_out_ready_o      ( rdn_in_ready[i]      ),
-            .done_out_chip_i       ( rdn_chip[i]          ),
-            .done_out_proxy_slot_i ( rdn_proxy_slot[i]    ),
-            .done_out_task_id_i    ( rdn_task_id[i]       ),
-            .done_out_reject_i     ( rdn_reject[i]        ),
+            .done_out_i            ( rdn_out[i]           ),
             .import_valid_o        ( rd_in_valid[i]       ),
             .import_ready_i        ( rd_ready[i] && !rl_import_hold[i] ),
-            .import_desc_o         ( rd_in_desc[i]        ),
-            .import_core_type_o    ( rd_in_core_type[i]   ),
-            .import_origin_chip_o  ( rd_in_origin_chip[i] ),
-            .import_proxy_slot_o   ( rd_in_proxy_slot[i]  ),
+            .import_o              ( link_import          ),
             .done_in_valid_o       ( rdn_in_valid[i]      ),
             .done_in_ready_i       ( rdn_ready[i]         ),
-            .done_in_proxy_slot_o  ( rdn_in_proxy_slot[i] ),
-            .done_in_task_id_o     ( rdn_in_task_id[i]    ),
-            .done_in_reject_o      ( rdn_in_reject[i]     ),
+            .done_in_o             ( link_done            ),
             .mst_req_o             ( rl_mst_req[i]        ),
             .mst_resp_i            ( rl_mst_resp[i]       ),
             .slv_req_i             ( rl_slv_req[i]        ),
@@ -999,9 +1014,15 @@ initial for (int i = 0; i < NUM_CHIPLET; i++) cluster_access[i] = '0;
 // Default 0: placement matches a run with parking left unused.
 device_axi_lite_data_t park_req  [NUM_CHIPLET];
 device_axi_lite_data_t park_fail [NUM_CHIPLET];
+bingo_hw_manager_pkg::evlog_status_t evlog_status [NUM_CHIPLET];
 logic [63:0] evlog_head [NUM_CHIPLET];
 logic [31:0] evlog_count [NUM_CHIPLET];
 logic [15:0] evlog_dropped [NUM_CHIPLET];
+for (genvar i = 0; i < NUM_CHIPLET; i++) begin : gen_evlog_status
+    assign evlog_head[i]    = evlog_status[i].head;
+    assign evlog_count[i]   = evlog_status[i].count;
+    assign evlog_dropped[i] = evlog_status[i].dropped;
+end
 logic [31:0] evlog_pop [NUM_CHIPLET];
 logic [31:0] recovery_hold [NUM_CHIPLET], pm_access_level [NUM_CHIPLET];
 initial for (int i = 0; i < NUM_CHIPLET; i++) begin
@@ -1067,6 +1088,8 @@ for (genvar chiplet_idx = 0; chiplet_idx < NUM_CHIPLET; chiplet_idx++) begin : g
         .SubstitutePolicy                    ( `TB_SUBSTITUTE_POLICY               ),
         .ForeignStuckDrain                   ( `TB_FOREIGN_STUCK_DRAIN             ),
         .EventLogDepth                       ( `TB_EVLOG_DEPTH                     ), .WaitingQueueDepth ( `TB_WAITING_QUEUE_DEPTH ), .PmCountBase ( 1 ), .PmCountDomains ( (`TB_PM_ENABLE != 0) ? NUM_CLUSTERS_PER_CHIPLET : 0 ),
+        .remote_dispatch_t                   ( tb_remote_dispatch_t                ),
+        .remote_done_t                       ( tb_remote_done_t                    ),
         .RemoteNumPeers                      ( RL_NUM_PEERS                        ),
         .ImportSubstituteLevelMask           ( `TB_IMPORT_SUBSTITUTE_LEVEL_MASK    ),
         .CsrHeartbeatAddr                    ( `TB_CSR_HEARTBEAT_ADDR              ),
@@ -1114,35 +1137,40 @@ for (genvar chiplet_idx = 0; chiplet_idx < NUM_CHIPLET; chiplet_idx++) begin : g
         .csr_rsp_o                            ( csr_resp[chiplet_idx]                                       ),
         .csr_rsp_valid_o                      ( csr_resp_valid[chiplet_idx]                                 ),
         .csr_rsp_ready_i                      ( csr_resp_ready[chiplet_idx]                                 ),
-        .bingo_hw_manager_enable_idle_pm_i    ( device_axi_lite_data_t'(`TB_PM_ENABLE)                        ),
-        .bingo_hw_manager_idle_power_level_i  ( device_axi_lite_data_t'(PM_IDLE_LEVEL)                        ),
-        .bingo_hw_manager_normal_power_level_i( device_axi_lite_data_t'(PM_NORMAL_LEVEL)                      ),
-        .bingo_hw_manager_boost_power_level_i ( device_axi_lite_data_t'(PM_BOOST_LEVEL)                       ),
-        .bingo_hw_manager_boost_policy_i      ( boost_policy[chiplet_idx]                                   ),
-        .bingo_hw_manager_idle_entry_delay_i  ( device_axi_lite_data_t'(`TB_PM_IDLE_DELAY)                    ),
+        .pm_csr_i                             ( '{enable_idle_pm:   device_axi_lite_data_t'(`TB_PM_ENABLE),
+                                                  pm_mode:          '0,
+                                                  idle_level:       device_axi_lite_data_t'(PM_IDLE_LEVEL),
+                                                  normal_level:     device_axi_lite_data_t'(PM_NORMAL_LEVEL),
+                                                  access_level:     pm_access_level[chiplet_idx],
+                                                  boost_level:      device_axi_lite_data_t'(PM_BOOST_LEVEL),
+                                                  dvfs_ack:         '0,
+                                                  idle_entry_delay: device_axi_lite_data_t'(`TB_PM_IDLE_DELAY),
+                                                  access_wake_hold: device_axi_lite_data_t'(`TB_PM_ACCESS_HOLD),
+                                                  recovery_hold:    recovery_hold[chiplet_idx],
+                                                  boost_policy:     boost_policy[chiplet_idx]} ),
+        .wd_risk_csr_i                        ( '{risk_late:    risk_late[chiplet_idx],
+                                                  risk_confirm: risk_confirm[chiplet_idx],
+                                                  risk_policy:  risk_policy[chiplet_idx],
+                                                  risk_epoch:   risk_epoch[chiplet_idx],
+                                                  wd_adapt:     wd_adapt[chiplet_idx],
+                                                  wd_late:      wd_late[chiplet_idx],
+                                                  wd_budget:    '0} ),
+        .evlog_ctrl_i                         ( '{enable: `TB_EVLOG_DEPTH != 0,
+                                                  clear:  '0,
+                                                  pop:    evlog_pop[chiplet_idx]} ),
+        .evlog_status_o                       ( evlog_status[chiplet_idx]                                   ),
         .bingo_hw_manager_cluster_access_i    ( cluster_access[chiplet_idx]                                 ),
-        .bingo_hw_manager_access_wake_hold_i  ( device_axi_lite_data_t'(`TB_PM_ACCESS_HOLD)                   ),
-        .bingo_hw_manager_recovery_hold_i     ( recovery_hold[chiplet_idx]                                  ),
-        .bingo_hw_manager_pm_access_level_i   ( pm_access_level[chiplet_idx]                                ),
         .bingo_hw_manager_park_req_i          ( park_req[chiplet_idx]                                       ),
         .bingo_hw_manager_park_fail_o         ( park_fail[chiplet_idx]                                      ),
-        .bingo_hw_manager_risk_late_i         ( risk_late[chiplet_idx]                                      ),
-        .bingo_hw_manager_risk_policy_i       ( risk_policy[chiplet_idx]                                    ),
-        .bingo_hw_manager_risk_epoch_i        ( risk_epoch[chiplet_idx]                                     ),
         .bingo_hw_manager_risk_clear_i        ( risk_clear[chiplet_idx]                                     ),
-        .bingo_hw_manager_risk_confirm_i      ( risk_confirm[chiplet_idx]                                   ),
         .wd_type_h_i                         ( wd_type_h[chiplet_idx]                                      ),
         .wd_type_c_i                         ( wd_type_c[chiplet_idx]                                      ),
-        .wd_adapt_i                          ( wd_adapt[chiplet_idx]                                       ),
-        .bingo_hw_manager_wd_late_i           ( wd_late[chiplet_idx]                                        ),
         .bingo_hw_manager_risk_o              ( risk[chiplet_idx]                                           ),
         .bingo_hw_manager_pm_base_addr_i      ( '0                                                          ),
         .bingo_hw_manager_core_power_domain_i ( pm_core_domain                                              ),
-        .bingo_hw_manager_pm_mode_i           ( '0                                                          ),
         // HeMAiA DVFS_CLINT_MSIP_ADDR CSR reset is 0; pm_mode_i[0]=0 gates the doorbell.
         .bingo_hw_manager_dvfs_clint_msip_addr_i ( '0                                                        ),
         // HeMAiA DVFS_ACK CSR reset is 0; pm_mode_i[0]=0 gates the acknowledged level.
-        .bingo_hw_manager_dvfs_ack_i          ( '0                                                          ),
         // Standalone DFS TB does not need the host DVFS request output.
         .bingo_hw_manager_dvfs_request_o      (                                                             ),
         .pm_axi_lite_req_o                    ( /* unused */                                                ),
@@ -1157,12 +1185,6 @@ for (genvar chiplet_idx = 0; chiplet_idx < NUM_CHIPLET; chiplet_idx++) begin : g
         .cerf_fb_evt_o                        ( cerf_fb_evt[chiplet_idx]                                     ),
         .bingo_hw_manager_fence_fb_i          ( fence_fb[chiplet_idx]                                        ),
         .sub_cfg_i                            ( sub_cfg[chiplet_idx]                                         ),
-        .evlog_enable_i                      ( `TB_EVLOG_DEPTH != 0                                        ),
-        .evlog_clear_i                       ( '0                                                          ),
-        .evlog_pop_i                         ( evlog_pop[chiplet_idx]                                      ),
-        .evlog_head_o                        ( evlog_head[chiplet_idx]                                     ),
-        .evlog_count_o                       ( evlog_count[chiplet_idx]                                    ),
-        .evlog_dropped_o                     ( evlog_dropped[chiplet_idx]                                  ),
         // DARTS: Load monitor
         .load_total_pending_o                 ( /* unused */                                                ),
         // Watchdog / replay status (probed hierarchically by the stimuli)
@@ -1175,27 +1197,22 @@ for (genvar chiplet_idx = 0; chiplet_idx < NUM_CHIPLET; chiplet_idx++) begin : g
         // Level 3 remote dispatch (see gen_remote_link)
         .remote_dispatch_valid_o              ( rd_valid[chiplet_idx]                                       ),
         .remote_dispatch_ready_i              ( rd_in_ready[chiplet_idx]                                    ),
-        .remote_dispatch_desc_o               ( rd_desc[chiplet_idx]                                        ),
-        .remote_dispatch_core_type_o          ( rd_core_type[chiplet_idx]                                   ),
-        .remote_dispatch_origin_chip_o        ( rd_origin_chip[chiplet_idx]                                 ),
-        .remote_dispatch_proxy_slot_o         ( rd_proxy_slot[chiplet_idx]                                  ),
+        .remote_dispatch_o                    ( rd_out[chiplet_idx]                                         ),
         .remote_dispatch_valid_i              ( rd_in_valid[chiplet_idx] && !rl_import_hold[chiplet_idx]    ),
         .remote_dispatch_ready_o              ( rd_ready[chiplet_idx]                                       ),
-        .remote_dispatch_desc_i               ( rd_in_desc[chiplet_idx]                                     ),
-        .remote_dispatch_core_type_i          ( rd_in_core_type[chiplet_idx]                                ),
-        .remote_dispatch_origin_chip_i        ( rd_in_origin_chip[chiplet_idx]                              ),
-        .remote_dispatch_proxy_slot_i         ( rd_in_proxy_slot[chiplet_idx]                               ),
+        .remote_dispatch_i                    ( '{desc:        rd_in_desc[chiplet_idx],
+                                                  core_type:   rd_in_core_type[chiplet_idx],
+                                                  origin_chip: rd_in_origin_chip[chiplet_idx],
+                                                  proxy_slot:  rd_in_proxy_slot[chiplet_idx]} ),
         .remote_done_valid_o                  ( rdn_valid[chiplet_idx]                                      ),
         .remote_done_ready_i                  ( rdn_in_ready[chiplet_idx]                                   ),
-        .remote_done_chip_o                   ( rdn_chip[chiplet_idx]                                       ),
-        .remote_done_proxy_slot_o             ( rdn_proxy_slot[chiplet_idx]                                 ),
-        .remote_done_task_id_o                ( rdn_task_id[chiplet_idx]                                    ),
-        .remote_done_reject_o                 ( rdn_reject[chiplet_idx]                                     ),
+        .remote_done_o                        ( rdn_out[chiplet_idx]                                        ),
         .remote_done_valid_i                  ( rdn_in_valid[chiplet_idx]                                   ),
         .remote_done_ready_o                  ( rdn_ready[chiplet_idx]                                      ),
-        .remote_done_proxy_slot_i             ( rdn_in_proxy_slot[chiplet_idx]                              ),
-        .remote_done_task_id_i                ( rdn_in_task_id[chiplet_idx]                                 ),
-        .remote_done_reject_i                 ( rdn_in_reject[chiplet_idx]                                  ),
+        .remote_done_i                        ( '{chip:       '0,
+                                                  proxy_slot: rdn_in_proxy_slot[chiplet_idx],
+                                                  task_id:    rdn_in_task_id[chiplet_idx],
+                                                  reject:     rdn_in_reject[chiplet_idx]} ),
         .remote_export_type_en_i              ( remote_type_en[chiplet_idx]                                 ),
         .remote_export_type_peer_i            ( remote_type_peer[chiplet_idx]                               ),
         .remote_export_peer_ready_i           ( remote_peer_ready[chiplet_idx]                              ),

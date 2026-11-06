@@ -458,8 +458,10 @@
   } replay_op_t;
 
 // A task exported to another chiplet (level 3), as the transport carries it:
-//   desc         the descriptor (bingo_hw_manager_task_desc_full_t of the top
-//                towards the transport, bingo_hw_manager_task_desc_t once imported)
+//   desc         the descriptor: a word at the ports of the top and of the
+//                transport (remote_dispatch_t of the top),
+//                bingo_hw_manager_task_desc_full_t towards the transport and
+//                bingo_hw_manager_task_desc_t once imported inside the top
 //   core_type    CoreTypeId of its logical slot on the origin chiplet
 //   origin_chip  the origin chiplet
 //   proxy_slot   its proxy slot on the origin chiplet (flat id), which takes its done
@@ -470,6 +472,19 @@
     chip_id_t                   origin_chip;                                                                             \
     remote_slot_t               proxy_slot;                                                                              \
   } remote_dispatch_t;
+
+// A done or a reject of an imported task, as the transport carries it:
+//   chip        the origin chiplet it goes to (0 and not read once received)
+//   proxy_slot  its proxy slot on that chiplet (flat id)
+//   task_id     the task
+//   reject      no live core here may run the task, instead of its done
+`define BINGO_HW_MANAGER_TYPEDEF_REMOTE_DONE_T(remote_done_t, chip_id_t, remote_slot_t, task_id_t) \
+  typedef struct packed {                                                                          \
+    chip_id_t     chip;                                                                            \
+    remote_slot_t proxy_slot;                                                                      \
+    task_id_t     task_id;                                                                         \
+    logic         reject;                                                                          \
+  } remote_done_t;
 
 // The proxy slots of the exported tasks (bingo_hw_manager_remote_export), per slot:
 //   waiting      its exported head waits for its remote done

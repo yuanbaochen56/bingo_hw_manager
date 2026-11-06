@@ -109,6 +109,10 @@ module bingo_hw_manager_top #(
     // 1 = one register per domain and its own valid register (the PM writes
     // only its domain; see bingo_hw_manager_pm DivisionPerDomain)
     parameter bit          PmDivisionPerDomain = 1'b0,
+    // Streams of the level 3 transport: BINGO_HW_MANAGER_TYPEDEF_REMOTE_DISPATCH_T
+    // (the desc a host_axi_lite_data_t) and _REMOTE_DONE_T (bingo_hw_manager/typedef.svh)
+    parameter type         remote_dispatch_t = logic,
+    parameter type         remote_done_t = logic,
     // Level 3 export queues: one per peer of the transport (e.g.
     // bingo_hw_manager_remote_link NumPeers), each deep enough for a whole
     // checkout queue, so a peer without credits only holds its own exports
@@ -186,28 +190,11 @@ module bingo_hw_manager_top #(
     output slot_mask_t                                                                                       csr_rsp_valid_o,
     input  slot_mask_t                                                                                       csr_rsp_ready_i,
     // ==== Host configuration (quad periph registers) and its read-back =====
-    /// The interface to the Power Management Module
-    // Host configuration interface
-    input device_axi_lite_data_t                bingo_hw_manager_enable_idle_pm_i,
-    // Recovery boost level (a faster clock divider than the normal level) of a
-    // domain whose core runs a dead core's tasks; 0 disables the boost
-    input device_axi_lite_data_t                bingo_hw_manager_boost_power_level_i = '0,
-    // Which cores get the boost level (bingo_hw_manager_level_policy,
-    // bingo_hw_manager_pkg::boost_policy_csr_t): [0] 0 = the substitutes of
-    // fenced cores, 1 = capacity (busy cores of a type that lost a core);
-    // [11:8] boosted domains per lost core (0 = no limit); [23:16] minimum load
-    // (checkout occupancy) of a boosted core
-    input device_axi_lite_data_t                bingo_hw_manager_boost_policy_i = '0,
-    // Cycles a core must be idle before it lets its domain drop to the idle
-    // level (bingo_hw_manager_power_view); 0 = at once
-    input device_axi_lite_data_t                bingo_hw_manager_idle_entry_delay_i = '0,
-    // External access wake (bingo_hw_manager_power_view): a request from outside into
-    // a cluster's memory this cycle (e.g. the host reading its L1), and the
-    // cycles the cluster's domain stays awake after the last one; 0 = off
+    // Power CSRs
+    input  bingo_hw_manager_pkg::pm_csr_t       pm_csr_i = '0,
+    // External access wake (bingo_hw_manager_power_view): a request from outside
+    // into a cluster's memory this cycle (e.g. the host reading its L1)
     input logic [NUM_CLUSTERS_PER_CHIPLET-1:0]  bingo_hw_manager_cluster_access_i = '0,
-    input device_axi_lite_data_t                bingo_hw_manager_access_wake_hold_i = '0,
-    input logic [31:0]                         bingo_hw_manager_recovery_hold_i = '0,
-    input logic [31:0]                         bingo_hw_manager_pm_access_level_i = '0,
     // Core parking (bingo_hw_manager_slot_table). Bit (core + cluster*NUM_CORES) asks
     // that logical slot to drain, then send later executing tasks to a live
     // core of its type. 0 leaves placement unchanged. park_fail_o is sticky for
@@ -217,46 +204,25 @@ module bingo_hw_manager_top #(
     // of its tasks is left on another core, then run on the slot again.
     input  device_axi_lite_data_t               bingo_hw_manager_park_req_i = '0,
     output device_axi_lite_data_t               bingo_hw_manager_park_fail_o,
-    // Fault precursors (bingo_hw_manager_risk). A heartbeat or done of a busy
-    // core whose watchdog timer reached risk_late is late (0 = off).
-    // policy: [3:0] late beats that make a slot at risk (0 = off), [4] park it,
-    // [5] derate its domain, [15:8] derate level. epoch: the counts are halved every that many cycles (0 = never). 
-    // clear and risk_o use the park_req bit order: a set clear bit keeps that slot's count at 0.
-    
-    //two thresholds from host: risk_late_i and risk_confirm_i
-    input  device_axi_lite_data_t               bingo_hw_manager_risk_late_i = '0,
-    input  logic [31:0]                        bingo_hw_manager_risk_confirm_i = '0, 
-    input  device_axi_lite_data_t               bingo_hw_manager_risk_policy_i = '0,
-    input  device_axi_lite_data_t               bingo_hw_manager_risk_epoch_i = '0, 
+    // Watchdog and fault precursor CSRs
+    input  bingo_hw_manager_pkg::wd_risk_csr_t  wd_risk_csr_i = '0,
+    // Fault precursors: uses the park_req bit order; a set bit keeps that slot's
+    // late-beat count at 0
     input  device_axi_lite_data_t               bingo_hw_manager_risk_clear_i = '0, 
     // Runtime type thresholds
     input  logic [2**CoreTypeIdWidth-1:0][31:0] wd_type_h_i = '0,
     input  logic [2**CoreTypeIdWidth-1:0][31:0] wd_type_c_i = '0,
-    // The learned bounds (bingo_hw_manager_wd_adapt): BINGO_WD_ADAPT and
-    // BINGO_WD_LATE, bingo_hw_manager_pkg::wd_adapt_csr_t / wd_late_csr_t
-    input  logic [31:0]                        wd_adapt_i = '0,
-    input  logic [31:0]                        bingo_hw_manager_wd_late_i = '0,
     // Compile-time task-time estimates (bingo_hw_manager_wd_est, BINGO_WD_EST,
     // bingo_hw_manager_pkg::wd_est_wr_t): a write pulse stores data [9:0] for
     // core type [19:16], class [14:12]. Until a class is learned, the learned
     // bounds start from its estimate. 0: none.
     input  logic                               wd_est_we_i = 1'b0,
     input  logic [31:0]                        wd_est_data_i = '0,
-    // Total-time budget against those estimates (bingo_hw_manager_wd_budget,
-    // BINGO_WD_BUDGET, bingo_hw_manager_pkg::wd_budget_csr_t): [0] EN, [1] ACTION
-    // (0 late beat, 1 fence), [4:2] SH_B, [6:5] FRAC_B, [31:12] BFLOOR. 0: off.
-    // [7] EST_FLOOR (bingo_hw_manager_wd_adapt): the estimate also bounds the learned
-    // bounds from below, not only until the class is learned.
-    input  logic [31:0]                        wd_budget_i = '0,
     output device_axi_lite_data_t               bingo_hw_manager_risk_o,
-    input device_axi_lite_data_t                bingo_hw_manager_idle_power_level_i,
-    input device_axi_lite_data_t                bingo_hw_manager_normal_power_level_i,
     input device_axi_lite_addr_t                bingo_hw_manager_pm_base_addr_i,
     input device_axi_lite_data_t                [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0]    bingo_hw_manager_core_power_domain_i,
-    // DVFS: mode select, CLINT doorbell address, host ack, and published request
-    input  device_axi_lite_data_t               bingo_hw_manager_pm_mode_i,
+    // DVFS: CLINT doorbell address and published request
     input  device_axi_lite_addr_t               bingo_hw_manager_dvfs_clint_msip_addr_i,
-    input  device_axi_lite_data_t               bingo_hw_manager_dvfs_ack_i,
     output device_axi_lite_data_t               bingo_hw_manager_dvfs_request_o,
     // AXI Lite Master Interface
     output host_axi_lite_req_t                  pm_axi_lite_req_o,
@@ -284,13 +250,9 @@ module bingo_hw_manager_top #(
     // before the first fence or park. The default is SubCfgDefault written out
     // (not every tool takes a package constant as a port default).
     input  bingo_hw_manager_pkg::sub_cfg_t      sub_cfg_i = {32'h0, 32'hffff_ffff},
-    // Observation-only event log. CLEAR/POP trigger once per value change.
-    input logic                                evlog_enable_i = 1'b0,
-    input logic [31:0]                         evlog_clear_i = '0,
-    input logic [31:0]                         evlog_pop_i = '0,
-    output logic [63:0]                        evlog_head_o,
-    output logic [31:0]                        evlog_count_o,
-    output logic [15:0]                        evlog_dropped_o,
+    // Observation-only event log
+    input  bingo_hw_manager_pkg::evlog_ctrl_t   evlog_ctrl_i = '0,
+    output bingo_hw_manager_pkg::evlog_status_t evlog_status_o,
     // Load monitor output (upstream, observation only; CSR readable)
     output logic [10:0]                         load_total_pending_o,
     // Power-domain counters: per counted domain, bingo_hw_manager_pkg PmcIdle .. PmcActive
@@ -324,34 +286,23 @@ module bingo_hw_manager_top #(
     // logical slot (proxy_slot, flat id) stays its proxy until the done returns.
     output logic                                remote_dispatch_valid_o,
     input  logic                                remote_dispatch_ready_i = 1'b0,
-    output host_axi_lite_data_t                 remote_dispatch_desc_o,        // bingo_hw_manager_task_desc_full_t
-    output logic [CoreTypeIdWidth-1:0]          remote_dispatch_core_type_o,   // CoreTypeId of the logical slot
-    output chip_id_t                            remote_dispatch_origin_chip_o,
-    output logic [RemoteSlotIdWidth-1:0]        remote_dispatch_proxy_slot_o,
+    output remote_dispatch_t                    remote_dispatch_o,
     // Import: a task exported by another chiplet, run on a core of the same type here
     input  logic                                remote_dispatch_valid_i = 1'b0,
     output logic                                remote_dispatch_ready_o,
-    input  host_axi_lite_data_t                 remote_dispatch_desc_i = '0,
-    input  logic [CoreTypeIdWidth-1:0]          remote_dispatch_core_type_i = '0,
-    input  chip_id_t                            remote_dispatch_origin_chip_i = '0,
-    input  logic [RemoteSlotIdWidth-1:0]        remote_dispatch_proxy_slot_i = '0,
-    // Done of an imported task, to be delivered to chiplet remote_done_chip_o
+    input  remote_dispatch_t                    remote_dispatch_i = '0,
+    // Done of an imported task, to be delivered to chiplet remote_done_o.chip, or
+    // a reject: no live core here may run the imported task (none of its type
+    // was live on arrival, or its core died and none is left)
     output logic                                remote_done_valid_o,
     input  logic                                remote_done_ready_i = 1'b0,
-    output chip_id_t                            remote_done_chip_o,
-    output logic [RemoteSlotIdWidth-1:0]        remote_done_proxy_slot_o,
-    output logic [TaskIdWidth-1:0]              remote_done_task_id_o,
-    // ... or a reject: no live core here may run the imported task (none of its
-    // type was live on arrival, or its core died and none is left)
-    output logic                                remote_done_reject_o,
-    // Done of an exported task (from the chiplet that ran it)
+    output remote_done_t                        remote_done_o,
+    // Done of an exported task (from the chiplet that ran it), or its reject: the
+    // proxy slot becomes stuck (replay_stuck_o), after the dones that arrived
+    // before it retired its earlier entries. Its chip is not read.
     input  logic                                remote_done_valid_i = 1'b0,
     output logic                                remote_done_ready_o,
-    input  logic [RemoteSlotIdWidth-1:0]        remote_done_proxy_slot_i = '0,
-    input  logic [TaskIdWidth-1:0]              remote_done_task_id_i = '0,
-    // ... or its reject: the proxy slot becomes stuck (replay_stuck_o), after
-    // the dones that arrived before it retired its earlier entries
-    input  logic                                remote_done_reject_i = 1'b0,
+    input  remote_done_t                        remote_done_i = '0,
     // Core types the transport can export (it has a target chiplet for them),
     // e.g. bingo_hw_manager_remote_link target_valid_o. A fenced core of another
     // type without a local substitute is stuck, as without level 3, instead of
@@ -549,12 +500,6 @@ module bingo_hw_manager_top #(
         logic [CoreTypeIdWidth-1:0]              core_type;
         remote_slot_t                            proxy_slot;
     } remote_export_t;
-    typedef struct packed{
-        bingo_hw_manager_assigned_chiplet_id_t   chip;
-        remote_slot_t                            proxy_slot;
-        bingo_hw_manager_task_id_t               task_id;
-        logic                                    reject;
-    } remote_done_t;
 
     function automatic bingo_hw_manager_task_desc_full_t desc_to_full(input bingo_hw_manager_task_desc_t d);
         bingo_hw_manager_task_desc_full_t f;
@@ -718,7 +663,6 @@ module bingo_hw_manager_top #(
     remote_done_t [NUM_CORES_PER_CLUSTER*NUM_CLUSTERS_PER_CHIPLET-1:0] remote_done_arb_data;
     logic         [NUM_CORES_PER_CLUSTER*NUM_CLUSTERS_PER_CHIPLET-1:0] remote_done_arb_valid;
     logic         [NUM_CORES_PER_CLUSTER*NUM_CLUSTERS_PER_CHIPLET-1:0] remote_done_arb_ready;
-    remote_done_t                                                      remote_done_out;
     // Level 3 rejects: executor side (one pending reject), origin side (sticky
     // per proxy slot)
     logic                                                              reject_pending;
@@ -847,22 +791,17 @@ module bingo_hw_manager_top #(
     logic [31:0] pm_access_level;
     // Validate all 32 bits before the PM narrows the divider to eight bits.
     assign pm_access_level =
-        (bingo_hw_manager_pm_access_level_i > 32'(bingo_hw_manager_normal_power_level_i[7:0]) &&
-         bingo_hw_manager_pm_access_level_i < 32'(bingo_hw_manager_idle_power_level_i[7:0])) ?
-        bingo_hw_manager_pm_access_level_i : 32'd0;
-    // The CSR words with fields (bingo_hw_manager_pkg)
-    risk_policy_csr_t  risk_policy;
-    boost_policy_csr_t boost_policy;
-    assign risk_policy  = risk_policy_csr_t'(32'(bingo_hw_manager_risk_policy_i));
-    assign boost_policy = boost_policy_csr_t'(32'(bingo_hw_manager_boost_policy_i));
-    assign pm_cfg = '{enable:       bingo_hw_manager_enable_idle_pm_i[0],
-                      dvfs:         bingo_hw_manager_pm_mode_i[0],
-                      idle_level:   bingo_hw_manager_idle_power_level_i[7:0],
-                      normal_level: bingo_hw_manager_normal_power_level_i[7:0],
+        (pm_csr_i.access_level > 32'(pm_csr_i.normal_level[7:0]) &&
+         pm_csr_i.access_level < 32'(pm_csr_i.idle_level[7:0])) ?
+        pm_csr_i.access_level : 32'd0;
+    assign pm_cfg = '{enable:       pm_csr_i.enable_idle_pm[0],
+                      dvfs:         pm_csr_i.pm_mode[0],
+                      idle_level:   pm_csr_i.idle_level[7:0],
+                      normal_level: pm_csr_i.normal_level[7:0],
                       access_level: pm_access_level[7:0],
-                      boost_level:  bingo_hw_manager_boost_power_level_i[7:0],
-                      derate_level: risk_policy.derate_level,
-                      dvfs_level:   bingo_hw_manager_dvfs_ack_i[7:0]};
+                      boost_level:  pm_csr_i.boost_level[7:0],
+                      derate_level: wd_risk_csr_i.risk_policy.derate_level,
+                      dvfs_level:   pm_csr_i.dvfs_ack[7:0]};
     slot_mask_t                                                     core_available;
     slot_mask_t                                                     core_dead_suspect;
     // Confirmed dead (sticky): the slot's ready reads, dones and heartbeats are ignored.
@@ -978,16 +917,10 @@ module bingo_hw_manager_top #(
     assign done_q_data_in = done_queue.push_data;
     assign done_q_empty   = done_queue.empty;
     // Level 3: what the remote dones and rejects of exported tasks do to the
-    // done queues, and the remote done input as a remote_done_t (its chip is
-    // this one)
+    // done queues
     done_remote_t done_remote;
     // Level 3, executor side: the import taken this cycle (bingo_hw_manager_remote_import)
     import_t      imported;
-    remote_done_t remote_done_in;
-    assign remote_done_in = '{chip:       '0,
-                              proxy_slot: remote_done_proxy_slot_i,
-                              task_id:    remote_done_task_id_i,
-                              reject:     remote_done_reject_i};
     // --------Finish Type definitions and signal declarations--------------------//
 
     // --------Module initializations---------------------------------------------//
@@ -1398,7 +1331,7 @@ module bingo_hw_manager_top #(
         .slot_i              ( slot_state                 ),
         .remote_done_valid_i ( remote_done_valid_i        ),
         .remote_done_ready_o ( remote_done_ready_o        ),
-        .remote_done_i       ( remote_done_in             ),
+        .remote_done_i       ( remote_done_i              ),
         .remote_o            ( done_remote                ),
         .done_o              ( done_queue                 ),
         .pop_i               ( done_q_pop                 )
@@ -1518,9 +1451,9 @@ module bingo_hw_manager_top #(
     // narrowing it. A valid R is below C and fits.
     logic [WatchdogCounterWidth-1:0] wd_risk_confirm;
     assign wd_risk_confirm = (WatchdogConfirmTimeoutCycles != 0 &&
-                             bingo_hw_manager_risk_confirm_i > WatchdogHeartbeatTimeoutCycles &&
-                             bingo_hw_manager_risk_confirm_i < WatchdogConfirmTimeoutCycles) ?
-                             WatchdogCounterWidth'(bingo_hw_manager_risk_confirm_i) : '0;
+                             wd_risk_csr_i.risk_confirm > WatchdogHeartbeatTimeoutCycles &&
+                             wd_risk_csr_i.risk_confirm < WatchdogConfirmTimeoutCycles) ?
+                             WatchdogCounterWidth'(wd_risk_csr_i.risk_confirm) : '0;
 `endif
     // choose the thresholds of each slot from three sources:
     // - type_h_i, type_c_i: from host
@@ -1542,8 +1475,8 @@ module bingo_hw_manager_top #(
     ) i_wd_bounds (
         .type_h_i       ( wd_type_h_i                     ),
         .type_c_i       ( wd_type_c_i                     ),
-        .late_i         ( bingo_hw_manager_risk_late_i    ),
-        .risk_confirm_i ( bingo_hw_manager_risk_confirm_i ),
+        .late_i         ( wd_risk_csr_i.risk_late    ),
+        .risk_confirm_i ( wd_risk_csr_i.risk_confirm ),
         .risk_i         ( ctrl_view.risk                  ), // registered ctrl risk bitmap
         .learned_i      ( wd_learned                      ),
         .class_i        ( wd_class_q                      ),
@@ -1572,13 +1505,7 @@ module bingo_hw_manager_top #(
     assign wd_task = '{wd_class: wd_class_q, moved: wd_moved_q, fast: ctrl_view.wd_fast};
     // The CSR words of the estimates, the learned bounds and the budget, with fields
     wd_est_wr_t     wd_est_wr;
-    wd_adapt_csr_t  wd_adapt_csr;
-    wd_late_csr_t   wd_late_csr;
-    wd_budget_csr_t wd_budget_csr;
     assign wd_est_wr     = wd_est_wr_t'(wd_est_data_i);
-    assign wd_adapt_csr  = wd_adapt_csr_t'(wd_adapt_i);
-    assign wd_late_csr   = wd_late_csr_t'(bingo_hw_manager_wd_late_i);
-    assign wd_budget_csr = wd_budget_csr_t'(wd_budget_i);
     bingo_hw_manager_wd_est #(
         .NumCores(NUM_CORES_PER_CLUSTER), .NumClusters(NUM_CLUSTERS_PER_CHIPLET),
         .WdAdaptTypeBits(WdAdaptTypeBits), .WdClassWidth(WdClassWidth),
@@ -1602,15 +1529,15 @@ module bingo_hw_manager_top #(
     ) i_wd_adapt (
         .clk_i(clk_i), 
         .rst_ni(rst_ni), 
-        .ctrl_i(wd_adapt_csr),
-        .late_ctrl_i(wd_late_csr),
+        .ctrl_i(wd_risk_csr_i.wd_adapt),
+        .late_ctrl_i(wd_risk_csr_i.wd_late),
         .event_i(wd_event), 
         .status_i(wd_status), 
         .task_i(wd_task),
         .h_eff_i(wd_bound.h_static), 
         .c_eff_i(wd_bound.c_static),
         .est_i(wd_est), 
-        .est_floor_i(wd_budget_csr.est_floor),
+        .est_floor_i(wd_risk_csr_i.wd_budget.est_floor),
         .learned_o(wd_learned)
     );
     bingo_hw_manager_wd_budget #(
@@ -1621,8 +1548,8 @@ module bingo_hw_manager_top #(
     ) i_wd_budget (
         .clk_i(clk_i), 
         .rst_ni(rst_ni), 
-        .ctrl_i(wd_budget_csr),
-        .late_ctrl_i(wd_late_csr),
+        .ctrl_i(wd_risk_csr_i.wd_budget),
+        .late_ctrl_i(wd_risk_csr_i.wd_late),
         .event_i(wd_event), 
         .status_i(wd_status), 
         .task_i(wd_task), 
@@ -1635,7 +1562,7 @@ module bingo_hw_manager_top #(
     bit wd_late_log;
     initial wd_late_log = $test$plusargs("bingo_adapt_log");
     always @(posedge clk_i) begin
-        if (rst_ni && wd_late_log && wd_late_csr.en) begin
+        if (rst_ni && wd_late_log && wd_risk_csr_i.wd_late.en) begin
             for (int c = 0; c < NUM_CORES_PER_CLUSTER; c++)
                 for (int cl = 0; cl < NUM_CLUSTERS_PER_CHIPLET; cl++)
                     if (wd_late[c][cl])
@@ -1734,15 +1661,15 @@ module bingo_hw_manager_top #(
                           cerf_fb_clear: cerf_fb_clear_i,
                           cerf_fb_set:   cerf_fb_set_i,
                           fence_fb:      bingo_hw_manager_fence_fb_i};
-    assign ctrl_cfg   = '{idle_delay:     32'(bingo_hw_manager_idle_entry_delay_i),
-                          access_hold:    32'(bingo_hw_manager_access_wake_hold_i),
-                          recovery_hold:  bingo_hw_manager_recovery_hold_i,
-                          risk_thresh:    risk_policy.thresh,
-                          risk_action:    risk_policy.action,
-                          risk_epoch:     32'(bingo_hw_manager_risk_epoch_i),
-                          boost_policy:   boost_policy.policy,
-                          boost_credit:   boost_policy.credit,
-                          boost_load_min: boost_policy.load_min,
+    assign ctrl_cfg   = '{idle_delay:     pm_csr_i.idle_entry_delay,
+                          access_hold:    pm_csr_i.access_wake_hold,
+                          recovery_hold:  pm_csr_i.recovery_hold,
+                          risk_thresh:    wd_risk_csr_i.risk_policy.thresh,
+                          risk_action:    wd_risk_csr_i.risk_policy.action,
+                          risk_epoch:     wd_risk_csr_i.risk_epoch,
+                          boost_policy:   pm_csr_i.boost_policy.policy,
+                          boost_credit:   pm_csr_i.boost_policy.credit,
+                          boost_load_min: pm_csr_i.boost_policy.load_min,
                           sub:            sub_cfg_i};
     bingo_hw_manager_ctrl #(
         .NumCores(NUM_CORES_PER_CLUSTER),
@@ -2035,18 +1962,18 @@ module bingo_hw_manager_top #(
         .timeout_cycles_i ( 32'(remote_proxy_timeout_i) ),
         .proxy_o          ( proxy                       )
     );
-    assign remote_dispatch_desc_o        = host_axi_lite_data_t'(remote_dispatch_out.desc);
-    assign remote_dispatch_core_type_o   = remote_dispatch_out.core_type;
-    assign remote_dispatch_origin_chip_o = remote_dispatch_out.origin_chip;
-    assign remote_dispatch_proxy_slot_o  = remote_dispatch_out.proxy_slot;
+    assign remote_dispatch_o = '{desc:        host_axi_lite_data_t'(remote_dispatch_out.desc),
+                                 core_type:   remote_dispatch_out.core_type,
+                                 origin_chip: remote_dispatch_out.origin_chip,
+                                 proxy_slot:  remote_dispatch_out.proxy_slot};
     assign remote_rejected_q             = proxy.rejected;
     assign remote_timeout_o              = proxy.timeout_any;
     assign remote_done_mismatch_o        = proxy.mismatch;
 
-    assign remote_dispatch_in = '{desc:        full_to_desc(bingo_hw_manager_task_desc_full_t'(remote_dispatch_desc_i)),
-                                  core_type:   remote_dispatch_core_type_i,
-                                  origin_chip: remote_dispatch_origin_chip_i,
-                                  proxy_slot:  remote_dispatch_proxy_slot_i};
+    assign remote_dispatch_in = '{desc:        full_to_desc(bingo_hw_manager_task_desc_full_t'(remote_dispatch_i.desc)),
+                                  core_type:   remote_dispatch_i.core_type,
+                                  origin_chip: remote_dispatch_i.origin_chip,
+                                  proxy_slot:  remote_dispatch_i.proxy_slot};
     bingo_hw_manager_remote_import #(
         .NumCores                  ( NUM_CORES_PER_CLUSTER                            ),
         .NumClusters               ( NUM_CLUSTERS_PER_CHIPLET                         ),
@@ -2104,12 +2031,8 @@ module bingo_hw_manager_top #(
         .done_ready_o        ( remote_done_arb_ready ),
         .remote_done_valid_o ( remote_done_valid_o   ),
         .remote_done_ready_i ( remote_done_ready_i   ),
-        .remote_done_o       ( remote_done_out       )
+        .remote_done_o       ( remote_done_o         )
     );
-    assign remote_done_chip_o       = remote_done_out.chip;
-    assign remote_done_proxy_slot_o = remote_done_out.proxy_slot;
-    assign remote_done_task_id_o    = remote_done_out.task_id;
-    assign remote_done_reject_o     = remote_done_out.reject;
 
     //////////////////////////////////////////////////////////////////////
     // Control event log (observation only)
@@ -2171,16 +2094,14 @@ module bingo_hw_manager_top #(
             .Depth(EventLogDepth),
             .AgeWidth(EventLogAgeWidth)
         ) i_evlog (
-            .clk_i, .rst_ni, .enable_i(evlog_enable_i),
-            .clear_i(evlog_clear_i), .pop_i(evlog_pop_i),
+            .clk_i, .rst_ni, .enable_i(evlog_ctrl_i.enable),
+            .clear_i(evlog_ctrl_i.clear), .pop_i(evlog_ctrl_i.pop),
             .event_i(events), .arg_i(args),
             .move_i(move.valid), .move_code_i(move.code), .move_slot_i(move.slot), .move_arg_i(move.arg),
-            .head_o(evlog_head_o), .count_o(evlog_count_o), .dropped_o(evlog_dropped_o)
+            .head_o(evlog_status_o.head), .count_o(evlog_status_o.count), .dropped_o(evlog_status_o.dropped)
         );
     end else begin : gen_no_evlog
-        assign evlog_head_o = '0;
-        assign evlog_count_o = '0;
-        assign evlog_dropped_o = '0;
+        assign evlog_status_o = '0;
     end
 
 `ifndef SYNTHESIS
@@ -2226,19 +2147,19 @@ module bingo_hw_manager_top #(
         .export_push_i         ( export_push                   ),
         .export_i              ( export_in                     ),
         .imported_i            ( imported                      ),
-        .import_origin_chip_i  ( remote_dispatch_origin_chip_i ),
-        .import_proxy_slot_i   ( remote_dispatch_proxy_slot_i  ),
+        .import_origin_chip_i  ( remote_dispatch_i.origin_chip ),
+        .import_proxy_slot_i   ( remote_dispatch_i.proxy_slot  ),
         .done_out_valid_i      ( remote_done_valid_o           ),
         .done_out_ready_i      ( remote_done_ready_i           ),
-        .done_out_reject_i     ( remote_done_reject_o          ),
-        .done_out_task_id_i    ( remote_done_task_id_o         ),
-        .done_out_chip_i       ( remote_done_chip_o            ),
-        .done_out_proxy_slot_i ( remote_done_proxy_slot_o      ),
+        .done_out_reject_i     ( remote_done_o.reject          ),
+        .done_out_task_id_i    ( remote_done_o.task_id         ),
+        .done_out_chip_i       ( remote_done_o.chip            ),
+        .done_out_proxy_slot_i ( remote_done_o.proxy_slot      ),
         .done_in_valid_i       ( remote_done_valid_i           ),
         .done_in_ready_i       ( remote_done_ready_o           ),
-        .done_in_reject_i      ( remote_done_reject_i          ),
-        .done_in_task_id_i     ( remote_done_task_id_i         ),
-        .done_in_proxy_slot_i  ( remote_done_proxy_slot_i      ),
+        .done_in_reject_i      ( remote_done_i.reject          ),
+        .done_in_task_id_i     ( remote_done_i.task_id         ),
+        .done_in_proxy_slot_i  ( remote_done_i.proxy_slot      ),
         .done_remote_i         ( done_remote                   ),
         .proxy_i               ( proxy                         ),
         .slot_log_o            ( slot_log_q                    )

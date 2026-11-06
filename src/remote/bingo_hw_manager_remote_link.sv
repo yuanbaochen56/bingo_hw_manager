@@ -11,8 +11,8 @@
 //     Export destination: static table RemoteTargetChip[core type]
 //     ({valid, chip id}); an invalid entry is never exported (ready held low).
 //     target_valid_o tells bingo which types it may export at all.
-//     Done destination: done_out_chip_i (origin of the imported task). A
-//     reject (done_out_reject_i: the task cannot run there) travels as a done.
+//     Done destination: done_out_i.chip (origin of the imported task). A
+//     reject (done_out_i.reject: the task cannot run there) travels as a done.
 // RX: one AXI-Lite slave spanning two 4 KiB pages at base_addr_i:
 //     page 0 (+0x0000) dispatch mailbox, page 1 (+0x1000) done mailbox. Each is
 //     a bingo_hw_manager_write_mailbox (write register at offset 0). Its other
@@ -87,6 +87,9 @@ module bingo_hw_manager_remote_link #(
     parameter int unsigned DescTaskIdLsb     = 9,
     parameter type         req_t             = logic,
     parameter type         resp_t            = logic,
+    // Streams (remote_dispatch_t and remote_done_t of bingo_hw_manager_top)
+    parameter type         dispatch_t        = logic,
+    parameter type         done_t            = logic,
     // DEPENDENT PARAMETERS, DO NOT OVERRIDE!
     parameter type         addr_t            = logic [AxiAddrWidth-1:0],
     parameter type         data_t            = logic [AxiDataWidth-1:0],
@@ -103,33 +106,22 @@ module bingo_hw_manager_remote_link #(
     // Base of the 8 KiB link region (same offset on every chiplet; the chip id
     // bits are replaced by the destination / own chip id)
     input  addr_t                                  base_addr_i,
-    // bingo -> link: export (remote_dispatch_*_o of bingo_hw_manager_top)
+    // bingo -> link: export (remote_dispatch_o of bingo_hw_manager_top)
     input  logic                                   export_valid_i,
     output logic                                   export_ready_o,
-    input  data_t                                  export_desc_i,
-    input  core_type_t                             export_core_type_i,
-    input  chip_id_t                               export_origin_chip_i,
-    input  slot_t                                  export_proxy_slot_i,
-    // bingo -> link: done of an imported task (remote_done_*_o)
+    input  dispatch_t                              export_i,
+    // bingo -> link: done of an imported task (remote_done_o)
     input  logic                                   done_out_valid_i,
     output logic                                   done_out_ready_o,
-    input  chip_id_t                               done_out_chip_i,
-    input  slot_t                                  done_out_proxy_slot_i,
-    input  task_id_t                               done_out_task_id_i,
-    input  logic                                   done_out_reject_i = 1'b0,
-    // link -> bingo: import (remote_dispatch_*_i)
+    input  done_t                                  done_out_i,
+    // link -> bingo: import (remote_dispatch_i)
     output logic                                   import_valid_o,
     input  logic                                   import_ready_i,
-    output data_t                                  import_desc_o,
-    output core_type_t                             import_core_type_o,
-    output chip_id_t                               import_origin_chip_o,
-    output slot_t                                  import_proxy_slot_o,
-    // link -> bingo: done of an exported task (remote_done_*_i)
+    output dispatch_t                              import_o,
+    // link -> bingo: done of an exported task (remote_done_i; its chip is 0)
     output logic                                   done_in_valid_o,
     input  logic                                   done_in_ready_i,
-    output slot_t                                  done_in_proxy_slot_o,
-    output task_id_t                               done_in_task_id_o,
-    output logic                                   done_in_reject_o,
+    output done_t                                  done_in_o,
     // AXI-Lite
     output req_t                                   mst_req_o,
     input  resp_t                                  mst_resp_i,
@@ -222,13 +214,13 @@ module bingo_hw_manager_remote_link #(
         tx_done_peer_ok = 1'b0;
         tx_done_peer    = '0;
         for (int unsigned p = 0; p < NumPeers; p++) begin
-            if (PeerChipId[p] == done_out_chip_i) begin
+            if (PeerChipId[p] == done_out_i.chip) begin
                 tx_done_peer_ok = 1'b1;
                 tx_done_peer    = peer_idx_t'(p);
             end
         end
-        tx_exp_valid = RemoteTargetChip[export_core_type_i][ChipIdWidth];
-        tx_exp_chip  = chip_id_t'(RemoteTargetChip[export_core_type_i][ChipIdWidth-1:0]);
+        tx_exp_valid = RemoteTargetChip[export_i.core_type][ChipIdWidth];
+        tx_exp_chip  = chip_id_t'(RemoteTargetChip[export_i.core_type][ChipIdWidth-1:0]);
         tx_exp_peer  = '0;
         for (int unsigned p = 0; p < NumPeers; p++) begin
             if (PeerChipId[p] == tx_exp_chip) tx_exp_peer = peer_idx_t'(p);
@@ -289,24 +281,24 @@ module bingo_hw_manager_remote_link #(
                 if (done_out_valid_i) begin
                     done_out_ready_o   = 1'b1;
                     tx_pkt_d           = '0;
-                    tx_pkt_d.kind      = done_out_reject_i ? KindReject : KindDone;
+                    tx_pkt_d.kind      = done_out_i.reject ? KindReject : KindDone;
                     tx_pkt_d.chip      = 8'(chip_id_i);
-                    tx_pkt_d.slot      = 8'(done_out_proxy_slot_i);
+                    tx_pkt_d.slot      = 8'(done_out_i.proxy_slot);
                     tx_pkt_d.seq       = tx_done_peer_ok ? tx_seq_done_q[tx_done_peer] : '0;
-                    tx_pkt_d.task_id   = 30'(done_out_task_id_i);
-                    tx_dest_d          = done_out_chip_i;
+                    tx_pkt_d.task_id   = 30'(done_out_i.task_id);
+                    tx_dest_d          = done_out_i.chip;
                     if (tx_done_peer_ok) tx_seq_done_d[tx_done_peer] = tx_seq_done_q[tx_done_peer] + 8'd1;
                     tx_state_d         = TxSend;
                 end else if (export_fire) begin
                     export_ready_o     = 1'b1;
                     tx_pkt_d           = '0;
                     tx_pkt_d.kind      = KindDispatch;
-                    tx_pkt_d.chip      = 8'(export_origin_chip_i);
-                    tx_pkt_d.slot      = 8'(export_proxy_slot_i);
-                    tx_pkt_d.core_type = 4'(export_core_type_i);
+                    tx_pkt_d.chip      = 8'(export_i.origin_chip);
+                    tx_pkt_d.slot      = 8'(export_i.proxy_slot);
+                    tx_pkt_d.core_type = 4'(export_i.core_type);
                     tx_pkt_d.seq       = tx_seq_disp_q[tx_exp_peer];
-                    tx_pkt_d.task_type = export_desc_i[DescTaskTypeLsb +: 2];
-                    tx_pkt_d.task_id   = 30'(export_desc_i[DescTaskIdLsb +: TaskIdWidth]);
+                    tx_pkt_d.task_type = export_i.desc[DescTaskTypeLsb +: 2];
+                    tx_pkt_d.task_id   = 30'(export_i.desc[DescTaskIdLsb +: TaskIdWidth]);
                     tx_dest_d          = tx_exp_chip;
                     tx_seq_disp_d[tx_exp_peer] = tx_seq_disp_q[tx_exp_peer] + 8'd1;
                     tx_state_d         = TxSend;
@@ -510,13 +502,13 @@ module bingo_hw_manager_remote_link #(
     assign import_valid_o       = !rx_disp_empty && rx_disp_kind_ok;
     assign rx_disp_deliver      = import_valid_o && import_ready_i;
     assign rx_disp_pop          = rx_disp_deliver || (!rx_disp_empty && !rx_disp_kind_ok);
-    assign import_core_type_o   = core_type_t'(rx_disp_pkt.core_type);
-    assign import_origin_chip_o = chip_id_t'(rx_disp_pkt.chip);
-    assign import_proxy_slot_o  = slot_t'(rx_disp_pkt.slot);
+    assign import_o.core_type   = core_type_t'(rx_disp_pkt.core_type);
+    assign import_o.origin_chip = chip_id_t'(rx_disp_pkt.chip);
+    assign import_o.proxy_slot  = slot_t'(rx_disp_pkt.slot);
     always_comb begin
-        import_desc_o = '0;
-        import_desc_o[DescTaskTypeLsb +: 2]         = rx_disp_pkt.task_type;
-        import_desc_o[DescTaskIdLsb +: TaskIdWidth] = task_id_t'(rx_disp_pkt.task_id);
+        import_o.desc = '0;
+        import_o.desc[DescTaskTypeLsb +: 2]         = rx_disp_pkt.task_type;
+        import_o.desc[DescTaskIdLsb +: TaskIdWidth] = task_id_t'(rx_disp_pkt.task_id);
     end
 
     // Done page
@@ -536,9 +528,10 @@ module bingo_hw_manager_remote_link #(
     assign done_in_valid_o      = !rx_done_empty && rx_done_kind_ok;
     assign rx_done_deliver      = done_in_valid_o && done_in_ready_i;
     assign rx_done_pop          = rx_done_deliver || (!rx_done_empty && !rx_done_kind_ok);
-    assign done_in_proxy_slot_o = slot_t'(rx_done_pkt.slot);
-    assign done_in_task_id_o    = task_id_t'(rx_done_pkt.task_id);
-    assign done_in_reject_o     = (rx_done_pkt.kind == KindReject);
+    assign done_in_o.chip       = '0;
+    assign done_in_o.proxy_slot = slot_t'(rx_done_pkt.slot);
+    assign done_in_o.task_id    = task_id_t'(rx_done_pkt.task_id);
+    assign done_in_o.reject     = (rx_done_pkt.kind == KindReject);
 
     // Sequence checks (on delivery) and sticky errors
     always_comb begin

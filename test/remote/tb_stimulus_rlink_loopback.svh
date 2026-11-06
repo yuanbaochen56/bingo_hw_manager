@@ -46,11 +46,11 @@ always @(posedge clk_i) begin
                        gen_dut[0].i_dut.imported.desc.task_id, gen_dut[0].i_dut.imported.core,
                        gen_dut[0].i_dut.imported.cluster);
             end
-            if (gen_dut[0].i_dut.remote_dispatch_origin_chip_i != 0 ||
-                gen_dut[0].i_dut.remote_dispatch_proxy_slot_i != 0) begin
+            if (gen_dut[0].i_dut.remote_dispatch_i.origin_chip != 0 ||
+                gen_dut[0].i_dut.remote_dispatch_i.proxy_slot != 0) begin
                 $error("[RLINK_LOOPBACK] import from chip %0d slot %0d",
-                       gen_dut[0].i_dut.remote_dispatch_origin_chip_i,
-                       gen_dut[0].i_dut.remote_dispatch_proxy_slot_i);
+                       gen_dut[0].i_dut.remote_dispatch_i.origin_chip,
+                       gen_dut[0].i_dut.remote_dispatch_i.proxy_slot);
             end
         end
         if (task_completed_bitmap[3] && !task_completed_bitmap[1]) $error("[RLINK_LOOPBACK] task 3 before task 1");

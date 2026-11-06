@@ -67,7 +67,7 @@ initial begin
     wait (rst_ni);
     fast_off = `TB_WD_ADAPT_FAST_OFF;
     void'($value$plusargs("FAST_OFF=%d", fast_off));
-    force gen_dut[0].i_dut.bingo_hw_manager_wd_late_i = fast_off ? 32'h0 : 32'h40;
+    wd_late[0] = fast_off ? 32'h0 : 32'h40;
     // EN, SH_H 1, SH_C 2, WARMUP 1, FLOOR 1
     wd_adapt[0] = (1 << 12) | (1 << 8) | (2 << 5) | (1 << 2) | 1;
     repeat (20) @(posedge clk_i);
@@ -91,7 +91,7 @@ initial begin
     force_level(0);
     expect_fast(1'b0, "unknown level 0");
     release gen_dut[0].i_dut.i_ctrl.pm_i.domain_level;
-    release gen_dut[0].i_dut.bingo_hw_manager_wd_late_i;
+    wd_late[0] = 0;
     $display("Fast execution tests passed off=%0d samples=%0d", fast_off, learned);
     $finish;
 end

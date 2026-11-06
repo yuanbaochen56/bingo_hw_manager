@@ -15,6 +15,7 @@
 //      from the link: a CTRL flush answers SLVERR and loses no packet
 `include "axi/typedef.svh"
 `include "axi/assign.svh"
+`include "bingo_hw_manager/typedef.svh"
 module tb_bingo_hw_manager_remote_link;
     localparam time CyclTime = 10ns;
     localparam int unsigned AW = 48, DW = 64, CIW = 8, SLW = 3, TIW = 12, CTW = 4;
@@ -23,6 +24,10 @@ module tb_bingo_hw_manager_remote_link;
     typedef logic [DW-1:0]   data_t;
     typedef logic [DW/8-1:0] strb_t;
     typedef logic [CIW-1:0]  chip_id_t;
+    typedef logic [SLW-1:0]  slot_t;
+    typedef logic [TIW-1:0]  task_id_t;
+    `BINGO_HW_MANAGER_TYPEDEF_REMOTE_DISPATCH_T(dispatch_t, data_t, chip_id_t, slot_t, CTW)
+    `BINGO_HW_MANAGER_TYPEDEF_REMOTE_DONE_T(done_t, chip_id_t, slot_t, task_id_t)
     `AXI_LITE_TYPEDEF_ALL(lite, addr_t, data_t, strb_t)
     localparam addr_t LinkBase = 48'h5000_0000;
 
@@ -67,6 +72,15 @@ module tb_bingo_hw_manager_remote_link;
     localparam logic [15:0][CIW:0] Target1 = (16*(CIW+1))'({1'b1, 8'd0}) << (1 * (CIW + 1));
 
     for (genvar i = 0; i < 2; i++) begin : gen_link
+        dispatch_t imported;
+        done_t     done_in;
+        assign imp_desc[i]   = imported.desc;
+        assign imp_type[i]   = imported.core_type;
+        assign imp_origin[i] = imported.origin_chip;
+        assign imp_slot[i]   = imported.proxy_slot;
+        assign din_slot[i]   = done_in.proxy_slot;
+        assign din_tid[i]    = done_in.task_id;
+        assign din_reject[i] = done_in.reject;
         bingo_hw_manager_remote_link #(
             .ChipIdWidth       ( CIW                          ),
             .CoreTypeIdWidth   ( CTW                          ),
@@ -79,7 +93,9 @@ module tb_bingo_hw_manager_remote_link;
             .RemoteTargetChip  ( (i == 0) ? Target0 : Target1 ),
             .DispatchCredits   ( Credits                      ),
             .req_t             ( lite_req_t                   ),
-            .resp_t            ( lite_resp_t                  )
+            .resp_t            ( lite_resp_t                  ),
+            .dispatch_t        ( dispatch_t                   ),
+            .done_t            ( done_t                       )
         ) i_link (
             .clk_i                 ( clk               ),
             .rst_ni                ( rst_n             ),
@@ -87,27 +103,18 @@ module tb_bingo_hw_manager_remote_link;
             .base_addr_i           ( LinkBase          ),
             .export_valid_i        ( exp_valid[i]      ),
             .export_ready_o        ( exp_ready[i]      ),
-            .export_desc_i         ( exp_desc[i]       ),
-            .export_core_type_i    ( exp_type[i]       ),
-            .export_origin_chip_i  ( chip_id_t'(i)     ),
-            .export_proxy_slot_i   ( exp_slot[i]       ),
+            .export_i              ( '{desc: exp_desc[i], core_type: exp_type[i],
+                                       origin_chip: chip_id_t'(i), proxy_slot: exp_slot[i]} ),
             .done_out_valid_i      ( dout_valid[i]     ),
             .done_out_ready_o      ( dout_ready[i]     ),
-            .done_out_chip_i       ( dout_chip[i]      ),
-            .done_out_proxy_slot_i ( dout_slot[i]      ),
-            .done_out_task_id_i    ( dout_tid[i]       ),
-            .done_out_reject_i     ( dout_reject[i]    ),
+            .done_out_i            ( '{chip: dout_chip[i], proxy_slot: dout_slot[i],
+                                       task_id: dout_tid[i], reject: dout_reject[i]} ),
             .import_valid_o        ( imp_valid[i]      ),
             .import_ready_i        ( imp_ready[i]      ),
-            .import_desc_o         ( imp_desc[i]       ),
-            .import_core_type_o    ( imp_type[i]       ),
-            .import_origin_chip_o  ( imp_origin[i]     ),
-            .import_proxy_slot_o   ( imp_slot[i]       ),
+            .import_o              ( imported          ),
             .done_in_valid_o       ( din_valid[i]      ),
             .done_in_ready_i       ( din_ready[i]      ),
-            .done_in_proxy_slot_o  ( din_slot[i]       ),
-            .done_in_task_id_o     ( din_tid[i]        ),
-            .done_in_reject_o      ( din_reject[i]     ),
+            .done_in_o             ( done_in           ),
             .mst_req_o             ( xbar_in_req[i]    ),
             .mst_resp_i            ( xbar_in_resp[i]   ),
             .slv_req_i             ( xbar_out_req[i]   ),
