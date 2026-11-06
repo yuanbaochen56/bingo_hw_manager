@@ -2,10 +2,8 @@
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
 // SPDX-License-Identifier: SHL-0.51
 
-// CSR port of the cores (bingo_hw_manager_top READY_AND_DONE_QUEUE_INTERFACE_TYPE
-// = 1): a core reads its next task id from its ready queue, writes the done of
+// CSR port of the cores : a core reads its next task id from its ready queue, writes the done of
 // a task and sends heartbeats, all through CSR requests
-// (bingo_hw_manager_csr_to_fifo decodes them).
 //
 // - A fenced core is cut off: its ready reads stall, its heartbeats are
 //   ignored, and its done writes are accepted and dropped (its tasks are
@@ -79,7 +77,7 @@ module bingo_hw_manager_csr_port #(
     logic     [N_CORES_TOTAL-1:0] write_done_queue_valid_1d;
     logic     [N_CORES_TOTAL-1:0] write_done_queue_ready_1d;
     data_t                        write_done_queue_data;
-    //
+    // 1D Heartbeats, and CSR requests to an unknown address
     logic     [N_CORES_TOTAL-1:0] heartbeat_valid_1d;
     data_t    [N_CORES_TOTAL-1:0] heartbeat_data_1d;
     logic     [N_CORES_TOTAL-1:0] csr_req_unknown_1d;

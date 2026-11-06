@@ -1296,14 +1296,17 @@ module bingo_hw_manager_top #(
     //////////////////////////////////////////////////////////////////////
     // Core interface and done queues
     //////////////////////////////////////////////////////////////////////
-    // With the CSR interface the cores read their ready queues, write their
-    // dones and send heartbeats through CSR requests (bingo_hw_manager_csr_port),
-    // which cut a fenced core off. With the AXI-Lite interface they use the
-    // mailboxes of the ready queues and of the done queues instead.
+    // READY_AND_DONE_QUEUE_INTERFACE_TYPE selects how the cores reach the manager:
+    //   1: CSR requests (bingo_hw_manager_csr_port) carry ready reads, done writes
+    //      and heartbeats. The port also isolates a fenced core: its ready reads
+    //      stall, its heartbeats are ignored and its dones are dropped.
+    //   0: The cores use the mailboxes of the ready queues and of the done queues.
+    //      There are no heartbeats (heartbeat_valid is tied to 0).
+    //
     // Each (core, cluster) slot has its own done queue
-    // (bingo_hw_manager_done_queues), so the completions of different cores
-    // and clusters drain independently; a done of an exported task comes back
-    // into the done queue of its proxy slot.
+    // (bingo_hw_manager_done_queues), so the dones of one slot never block those
+    // of another. The done of a task exported to another chiplet (level 3) returns
+    // from the chiplet that ran it into the done queue of the task's proxy slot.
     csr_done_t                        csr_done;
     logic                             csr_done_ready;
     if (READY_AND_DONE_QUEUE_INTERFACE_TYPE==1) begin: gen_csr_to_fifo_intf
@@ -1402,9 +1405,9 @@ module bingo_hw_manager_top #(
     //////////////////////////////////////////////////////////////////////
     // Power Manager
     //////////////////////////////////////////////////////////////////////
-    // Every slot as the PM reads it: domain, idle (polling or fenced,
-    // bingo_hw_manager_power_view, so a dead core does not keep its domain at
-    // the normal level), busy only with outside accesses, boosted, derated
+    // What the PM reads of every slot (see pm_slot_t): its power domain, and the
+    // idle, access, boost and derate views of the control plane. A fenced slot
+    // counts as idle, so a dead core does not keep its domain at the normal level.
     pm_slot_t pm_slot;
     assign pm_slot = '{domain:      ctrl_slot_domain,
                        idle:        ctrl_view.idle,
@@ -1643,8 +1646,17 @@ module bingo_hw_manager_top #(
 `endif
 
     //////////////////////////////////////////////////////////////////////
-    // Control plane: slot mapping table (substitute of every logical core)
+    // Control plane (bingo_hw_manager_ctrl)
     //////////////////////////////////////////////////////////////////////
+    // bingo_hw_manager_ctrl keeps the slot state that placement, replay and power
+    // share, and makes the decisions they only read: the slot mapping table
+    // (smt), core parking, the at-risk slots, the idle, boost and derate views
+    // of the PM, and the CERF degradation. This section prepares its inputs
+    // (slot state, queues, host settings, power state) and instantiates it.
+
+    // The table changes this cycle: at init, on a new fence, or on a park or
+    // unpark commit
+    logic                                                           smt_update;
     logic                                                           smt_update;
     // Parking. The request mask is bit (core + cluster * NUM_CORES).
     logic [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] park_req;
@@ -1935,15 +1947,24 @@ module bingo_hw_manager_top #(
     //////////////////////////////////////////////////////////////////////
     // Level 3: remote dispatch (SubstituteLevelMask[2])
     //////////////////////////////////////////////////////////////////////
-    // Origin side (bingo_hw_manager_remote_export): a task of a fenced slot D
-    // that no live core of this chiplet may run stays in D's checkout queue,
-    // marked exported, and a copy goes to another chiplet. D is its proxy: the
-    // remote done comes back into D's done queue and retires the head with the
-    // normal dep_set. A proxy whose export is rejected or times out stops
-    // (bingo_hw_manager_remote_proxy).
-    // Executor side: an imported task runs on a live core of its type here, as
-    // a task of the lowest slot of that type, and its done (or a reject) goes
-    // back to its origin (bingo_hw_manager_remote_reply).
+    // A task of a fenced slot that no live core of this chiplet may run goes to
+    // another chiplet.
+    //
+    // Origin side:
+    //   - The task stays in the checkout queue of its fenced slot D, marked
+    //     exported, and a copy leaves for the other chiplet
+    //     (bingo_hw_manager_remote_export).
+    //   - D is its proxy: the remote done enters D's done queue and retires the
+    //     head with the normal dep_set.
+    //   - A proxy whose export is rejected or times out stops
+    //     (bingo_hw_manager_remote_proxy).
+    //
+    // Executor side:
+    //   - The task runs as a task of the lowest slot of its core type (its home),
+    //     on that slot or on its live stand-in (bingo_hw_manager_remote_import).
+    //   - Its dependencies were checked on the origin, and it sets none here.
+    //   - Its done goes back to the origin, or a reject if no live core here may
+    //     run it (bingo_hw_manager_remote_reply).
     bingo_hw_manager_task_desc_full_t [NUM_CORES_PER_CLUSTER-1:0][NUM_CLUSTERS_PER_CHIPLET-1:0] route_desc_full;
     // The proxy slots of the exported tasks, and the exports to the transport
     proxy_t                                                               proxy;

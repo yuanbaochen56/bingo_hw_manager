@@ -2,25 +2,27 @@
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
 // SPDX-License-Identifier: SHL-0.51
 
-// Level 3, origin side (bingo_hw_manager_top SubstituteLevelMask[2]): export
-// queues towards other chiplets.
+// Level 3, origin side (SubstituteLevelMask[2] of bingo_hw_manager_top): the
+// export queues towards other chiplets.
 //
-// A task whose logical slot D is fenced and has no live substitute on this
-// chiplet (any enabled level) stays in D's checkout queue, marked exported,
-// and a copy leaves through dispatch_o:
-//   - outstanding tasks: rotated by the replay controller (step_i.exported)
-//   - new tasks of a retired D: routed to D's checkout queue only
-//     (route_i.remote); routed exports of different slots are granted one
-//     per cycle (route_grant_o), after a replay export, among the slots
-//     whose checkout queue and export queue have room
-// Replay rotations and routed exports never coincide (the new tasks of
-// fenced logical cores are held while a replay is pending).
-// There is one export queue per peer of the transport; a proxy only exports
-// tasks of its own type, so all of them go through one queue, in order. Only
-// a peer that takes an export at once (peer_ready_i) competes.
+// A task is exported when its logical slot D is fenced and no enabled level has
+// a live substitute for it on this chiplet. The task stays in D's checkout
+// queue, marked exported, and a copy leaves through dispatch_o. D is its proxy:
+// the remote done comes back into D's done queue, and
+// bingo_hw_manager_remote_proxy keeps the state of the proxy slots.
 //
-// D is the proxy: its done comes back into D's done queue; the state of the
-// proxy slots (waiting, timeout, rejected) is bingo_hw_manager_remote_proxy.
+// Exports have two sources, never active in the same cycle (the new tasks of
+// fenced logical cores are held while a replay is pending):
+//   - Replay: the replay controller rotates the outstanding tasks of D
+//     (step_i.exported).
+//   - Route: the new tasks of a retired D go to D's checkout queue only
+//     (route_i.remote). One slot is granted per cycle (route_grant_o), among
+//     those whose checkout queue and export queue have room.
+//
+// Each peer of the transport has one export queue, chosen by core type
+// (type_peer_i). A proxy only exports tasks of its own type, so they all go
+// through one queue, in order. Only a peer that takes an export at once
+// (peer_ready_i) competes for the transport.
 module bingo_hw_manager_remote_export #(
     parameter int unsigned NumCores = 4,
     parameter int unsigned NumClusters = 2,

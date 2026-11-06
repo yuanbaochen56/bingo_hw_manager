@@ -202,16 +202,21 @@ module bingo_hw_manager_checkout_queue
     //////////////////////////////////////////////////////////////////////
     // Stuck drain
     //////////////////////////////////////////////////////////////////////
-    // A stuck or rejected slot runs nothing more. Its head may still retire
-    // the way a skipped task does (dep_set, no done) when it never runs on
-    // a core anyway (dummy-set, or skipped at dispatch) or when the CERF
-    // now skips it (degradation, see bingo_hw_manager_cerf_fallback). For the
-    // slot's own logical core with no task in another slot: then every
-    // older task of that core has left this FIFO. With ForeignStuckDrain,
-    // also for a logical core X that died before this slot: X is retired
-    // (its own queue holds none of its tasks) and every task of X in
-    // another slot is in this one, so this FIFO keeps X's order (a type
-    // with a substitute whose two cores both died). Anything else waits.
+    // A stuck or rejected slot runs nothing more, but its head may still retire
+    // like a skipped task (dep_set, no done) when both conditions hold.
+    //
+    // 1. The head needs no core:
+    //    - it never runs on one , or the CERF skips it now.
+    //
+    // 2. Its dep_set cannot overtake an older task of its logical slot:
+    //    - Own head: no task of this logical slot sits in another slot.
+    //    - Foreign head (ForeignStuckDrain): its logical slot X is retired, so
+    //      X's own queue holds none of its tasks, and every task of X in another
+    //      slot sits in this queue, which keeps their order. This covers a type
+    //      with a substitute whose two cores both died.
+    //
+    // stuck_drain_o checks condition 2 and retire_kind checks condition 1. An
+    // imported head never drains here, and any other head waits.
     logic stuck_head_own, stuck_head_foreign;
     assign stuck_head_own =
         (head.assigned_core_id == CoreIdWidth'(Core)) &&

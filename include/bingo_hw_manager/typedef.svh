@@ -509,7 +509,8 @@
 
 // What the PM (bingo_hw_manager_pm) reads of every slot:
 //   domain       its power domain, decoded once by the top (PmMaxDomains: none)
-//   idle         it waits for a task, or is fenced (bingo_hw_manager_power_view)
+//   idle         it waits for a task, has exited or is fenced, after the delay
+//                and holds of bingo_hw_manager_power_view
 //   access_only  it is busy only with accesses from outside (DFS access level)
 //   boost        its domain runs at the boost level (recovery or capacity boost,
 //                bingo_hw_manager_level_policy)
