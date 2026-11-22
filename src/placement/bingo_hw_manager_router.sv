@@ -30,7 +30,7 @@ module bingo_hw_manager_router #(
     parameter type         remap_req_t = logic,
     parameter type         remap_sel_t = logic
 ) (
-    // Waiting queue heads, one per logical core: the head, empty, CERF skip
+    // Waiting queue heads, one per logical core
     input  waiting_t                             waiting_i,
     // The checked head of each logical core, offered to one physical cluster
     input  logic [NumCores-1:0][NumClusters-1:0] offer_valid_i,

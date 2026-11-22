@@ -36,7 +36,7 @@ initial begin : long_task_heartbeat_test
     end
 
     // Stop heartbeat and wait beyond timeout.
-    repeat (10) @(posedge clk_i);
+    repeat (5) @(posedge clk_i);
 
     if (gen_dut[0].i_dut.core_dead_suspect[0][0] !== 1'b1) begin
         $fatal(1, "core 0 should become dead_suspect without heartbeat");

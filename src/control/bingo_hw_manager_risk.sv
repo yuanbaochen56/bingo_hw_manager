@@ -2,7 +2,7 @@
 // Solderpad Hardware License, Version 0.51, see LICENSE for details.
 // SPDX-License-Identifier: SHL-0.51
 
-// Fault precursors of the control plane (bingo_hw_manager_ctrl): every late
+// Fault precursors of the control plane: every late
 // beat of a slot (late_i, from the watchdog: a heartbeat or done of a busy core
 // whose timer had reached the late threshold) adds one to a 4-bit saturating
 // count. Every cfg_i.risk_epoch cycles all counts are halved (0 = never), so

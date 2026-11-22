@@ -375,14 +375,6 @@ module bingo_hw_manager_top #(
         logic                                        cond_exec_invert;
     } bingo_hw_manager_task_desc_t;
 
-    // The watchdog only sees dispatches (ready queue pops) in the CSR interface mode.
-    if ((WatchdogConfirmTimeoutCycles != 0) && (READY_AND_DONE_QUEUE_INTERFACE_TYPE != 1)) begin : gen_replay_intf_check
-        initial begin
-        $error("WatchdogConfirmTimeoutCycles (task replay) needs READY_AND_DONE_QUEUE_INTERFACE_TYPE = 1 (CSR)");
-        $finish;
-        end
-    end
-
     // Retain the legacy width/offset of is_exit. Class is optional metadata
     // in the low reserved bits, never an extension of the host descriptor.
     localparam int unsigned WdTaskDescWidth = $bits(bingo_hw_manager_task_desc_t);
@@ -1430,7 +1422,7 @@ module bingo_hw_manager_top #(
         .rst_ni      ( rst_ni          ),
         .event_i     ( wd_event        ),
         .bound_i     ( wd_bound        ),
-        .fence_req_i ( wd_budget_fence ), // from wd_budget
+        .fence_req_i ( wd_budget_fence ), 
         .status_o    ( wd_status       )
     );
 

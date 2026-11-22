@@ -2,45 +2,6 @@
 //
 // Picks the physical core that receives a task assigned to logical core
 // `req_i.core` in cluster `req_i.cluster`.
-//
-// Semantics (remap only after a dead core's outstanding tasks were replayed,
-// or after a live core was parked — see bingo_hw_manager_slot_table):
-// - A logical core that is not fenced and not parked always keeps its own
-//   tasks. Being busy, slow or dead_suspect is NOT a reason to move work: the
-//   compiler relies on per-core in-order execution (same-core HOL), and a
-//   dummy-set task only waits for its source because both sit in the same
-//   core's checkout FIFO.
-// - A slot in HOLD (park_i.hold: not yet parked, or moving back from PARKED
-//   while its tasks on the substitute finish) admits no new task at all.
-//   Dummy-set and CERF-skipped tasks wait with the rest.
-// - A fenced (confirmed dead) logical core that is not retired yet still has
-//   outstanding tasks waiting to be replayed: its new tasks are held
-//   (sel_o.valid = 0) so they cannot overtake the replayed ones. Once it is
-//   stuck (no live core may run them), its dummy-set and CERF-skipped tasks
-//   join its own checkout FIFO, which retires them behind its earlier tasks.
-// - Once PARKED, an executing task follows the same table as a retired core.
-//   Dummy-set and CERF-skipped tasks stay on the logical core. A parked slot
-//   is not a remote proxy: level 3 does not export it.
-// - Once retired, an executing task (req_i.remappable) goes to the substitute of
-//   the logical core in the slot mapping table, bingo_hw_manager_slot_table
-//   (smt_i): a live core with the same non-zero CoreTypeId as the logical
-//   core, in the logical cluster if there is one (level 1), else in another
-//   cluster (level 2, if SubstituteLevelMask[1]). The table entry only changes
-//   when that substitute is fenced, so consecutive tasks of one dead core land
-//   on the same substitute, in order. While the table is written
-//   (smt_update_i) the task waits a cycle. Without such a
-//   substitute the task is held, unless level 3 (SubstituteLevelMask[2]) is
-//   enabled and the core has a non-zero type that the transport can export
-//   (remote_type_en_i): then it stays on its (retired) logical slot, which acts
-//   as the proxy of a remote chiplet; sel_o.remote has the router export it, not
-//   push it to the ready queue (remote_export). Once the remote chiplet rejected
-//   a task of that proxy (slot_i.rejected: no live core of the type there
-//   either), its new tasks are held, like those of a core without substitute.
-// - Dummy-set and CERF-skipped tasks (req_i.remappable = 0) never execute on a
-//   core; they stay on their logical core even when it is retired (its checkout
-//   FIFO still retires them).
-// - Back-pressure (full ready/checkout queue) is left to the downstream
-//   handshake, so the selection is valid whenever a request is present.
 module bingo_hw_manager_core_remap #(
     parameter int unsigned NumCores = 4,
     parameter int unsigned NumClusters = 2,

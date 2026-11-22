@@ -32,13 +32,15 @@ end
 assign ubusy = unit_status.busy;
 assign suspect = unit_status.dead_suspect;
 assign ufence = unit_status.fenced;
+
 bingo_hw_manager_watchdog #(
     .NumCores(2), .NumClusters(1), .CounterWidth(CW),
     .HeartbeatTimeoutCycles(20), .ConfirmTimeoutCycles(WATCHDOG_CONFIRM_TIMEOUT),
     .CoreTypeId(8'h21),
     .wd_event_t(unit_wd_event_t), .wd_bound_t(unit_wd_bound_t), .wd_status_t(unit_wd_status_t)
 ) unit_wd (
-    .clk_i(clk_i), .rst_ni(unit_rst),
+    .clk_i(clk_i), 
+    .rst_ni(unit_rst),
     .event_i('{dispatch: ud, done: done, heartbeat: hb, waiting: '0, tick: ticks}),
     .bound_i('{suspect_eff: unit_suspect_eff, confirm_eff: unit_confirm_eff,
                confirm_src: unit_confirm_src, default: '0}),
@@ -49,6 +51,7 @@ task automatic step();
     @(posedge clk_i); #1;
 endtask
 
+//h:late heartbeat, c:confirm fence, r:risk
 task automatic start_unit(input logic [31:0] h, c, r);
     @(negedge clk_i);
     unit_rst = 0; ud = '0; done = '0; hb = '0; ticks = '1;
@@ -89,7 +92,8 @@ task automatic check_thresholds(input logic [31:0] h, c, r, input int period = 1
 endtask
 
 initial begin
-    wait (rst_ni); repeat (20) @(posedge clk_i);
+    wait (rst_ni);
+    repeat (20) @(posedge clk_i);
     check_thresholds(8, 30, 0);
     check_thresholds(0, 0, 0);
     check_thresholds(21, 30, 0);

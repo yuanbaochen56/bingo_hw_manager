@@ -41,7 +41,7 @@ module bingo_hw_manager_watchdog #(
     // another core. 0 disables fencing (detection only).
     parameter int unsigned ConfirmTimeoutCycles = 0,
     // Slots with CoreMask = 0 are never reported dead_suspect (e.g. a host slot
-    // that does not send heartbeats, or a tied-off slot).
+    // that does not send heartbeats).
     parameter logic [NumCores-1:0][NumClusters-1:0] CoreMask = '1,
     parameter int unsigned CoreTypeIdWidth = 4,
     parameter logic [NumCores-1:0][NumClusters-1:0][CoreTypeIdWidth-1:0] CoreTypeId = '0,

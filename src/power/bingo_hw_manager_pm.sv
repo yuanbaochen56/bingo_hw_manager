@@ -7,18 +7,19 @@
 // - Xiaoling Yi  <xiaoling.yi@kuleuven.be>
 // - Yunhao Deng  <yunhao.deng@kuleuven.be>
 
-// This is the power management module for the bingo hardware manager.
-// It supports two modes selected by cfg_i.dvfs:
-//  - DFS  (cfg_i.dvfs = 0): the PM autonomously scales per-domain clock division by writing
-//    the on-chip clk/rst controller over its AXI-Lite master (the legacy behavior).
-//  - DVFS (cfg_i.dvfs = 1): the PM only monitors chip-wide idle/busy and notifies the host.
-//    It publishes the requested action on dvfs_request_o and rings a doorbell by writing
-//    the host's dedicated CLINT MSIP bit (read-modify-write, so the other harts' pending
-//    bits are preserved). The host ISR then drives the external PMIC (voltage) and the
-//    clk/rst controller (frequency) in the safe V/F order (raise: V then F; lower: F then V).
-
-// The level each domain (or the chip) should run at comes from
-// bingo_hw_manager_pm_policy; this module applies it over the bus.
+// Power manager of the bingo hardware manager. bingo_hw_manager_pm_policy
+// chooses the level each domain (or the chip) should run at; this module acts
+// on it in one of two modes (cfg_i.dvfs):
+//   0: DFS, clock only, per domain. The PM applies the level itself: it writes
+//      the clock division to the on-chip clk/rst controller over its AXI-Lite
+//      master.
+//   1: DVFS, voltage and clock, one level for the chip. The PM only asks the
+//      host to apply the level: it publishes the request on dvfs_request_o and
+//      rings a doorbell, a read-modify-write of the host's dedicated bit in the
+//      CLINT MSIP word that keeps the pending bits of the other harts. The host
+//      ISR then sets the external PMIC (voltage) and the clk/rst controller
+//      (frequency) in the safe order: to raise, voltage first; to lower,
+//      frequency first.
 
 module bingo_hw_manager_pm #(
     parameter int unsigned NUM_CLUSTERS_PER_CHIPLET = 4,

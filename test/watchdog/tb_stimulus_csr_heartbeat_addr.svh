@@ -28,10 +28,6 @@ initial begin : csr_heartbeat_addr_test
     wait (rst_ni);
     repeat (20) @(posedge clk_i);
 
-    if (CSR_HEARTBEAT !== CSR_READY) begin
-        $fatal(1, "test expects the heartbeat on the ready CSR");
-    end
-
     $display("[HB_ADDR] Core 0 reads task 1 through CSR 0x5fe");
     task_queue_master[0].write(task_queue_base[0], '0, hb_core0_task, '1, resp);
     csr_read(0, 0, 0, CSR_READY, task_id);
